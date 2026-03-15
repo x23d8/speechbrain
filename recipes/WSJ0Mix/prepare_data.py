@@ -55,11 +55,11 @@ def create_custom_dataset(
     datapath,
     savepath,
     dataset_name="custom",
-    set_types=["train", "valid", "test"],
+    set_types=["train","test"],
     folder_names={
-        "source1": "source1",
-        "source2": "source2",
-        "mixture": "mixture",
+        "source1": "s1",
+        "source2": "s2",
+        "mixture": "mix"
     },
 ):
     """
