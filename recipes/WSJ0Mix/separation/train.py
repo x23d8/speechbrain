@@ -140,6 +140,13 @@ class Separation(sb.Brain):
             loss.data = torch.tensor(0.0).to(self.device)
         self.optimizer.zero_grad()
 
+        import wandb
+        if wandb.run is not None:
+            wandb.log({
+                "train_step_loss": loss.item(),
+                "train_step_si-snr": -loss.item()
+            })
+
         return loss.detach().cpu()
 
     def evaluate_batch(self, batch, stage):
@@ -162,6 +169,14 @@ class Separation(sb.Brain):
                     self.hparams.n_audio_to_save += -1
             else:
                 self.save_audio(snt_id[0], mixture, targets, predictions)
+
+        import wandb
+        if wandb.run is not None:
+            prefix = "valid" if stage == sb.Stage.VALID else "test"
+            wandb.log({
+                f"{prefix}_step_loss": loss.mean().item(),
+                f"{prefix}_step_si-snr": -loss.mean().item()
+            })
 
         return loss.mean().detach()
 
@@ -191,6 +206,16 @@ class Separation(sb.Brain):
                 train_stats=self.train_stats,
                 valid_stats=stage_stats,
             )
+
+            import wandb
+            if wandb.run is not None:
+                wandb.log({
+                    "epoch": epoch,
+                    "lr": current_lr,
+                    "train_si-snr": self.train_stats["si-snr"],
+                    "valid_si-snr": stage_stats["si-snr"],
+                })
+
             self.checkpointer.save_and_keep_only(
                 meta={"si-snr": stage_stats["si-snr"]}, min_keys=["si-snr"]
             )
@@ -199,6 +224,10 @@ class Separation(sb.Brain):
                 stats_meta={"Epoch loaded": self.hparams.epoch_counter.current},
                 test_stats=stage_stats,
             )
+            
+            import wandb
+            if wandb.run is not None:
+                wandb.log({"test_si-snr": stage_stats["si-snr"]})
 
     def add_speed_perturb(self, targets, targ_lens):
         """Adds speed perturbation and random_shift to the input signals"""
@@ -368,6 +397,15 @@ class Separation(sb.Brain):
         logger.info(f"Mean SDR is {np.array(all_sdrs).mean()}")
         logger.info(f"Mean SDRi is {np.array(all_sdrs_i).mean()}")
 
+        import wandb
+        if wandb.run is not None:
+            wandb.log({
+                "test_mean_sisnr": np.array(all_sisnrs).mean(),
+                "test_mean_sisnri": np.array(all_sisnrs_i).mean(),
+                "test_mean_sdr": np.array(all_sdrs).mean(),
+                "test_mean_sdri": np.array(all_sdrs_i).mean(),
+            })
+
     def save_audio(self, snt_id, mixture, targets, predictions):
         "saves the test audio (mixture, targets, and estimated sources) on disk"
 
@@ -477,6 +515,10 @@ if __name__ == "__main__":
 
     # Logger info
     logger = get_logger(__name__)
+
+    import wandb
+    wandb.init(project="wsj0mix-separation")
+    wandb.save(os.path.join(hparams["output_folder"], "**", "*"), base_path=hparams["output_folder"], policy="live")
 
     # Create experiment directory
     sb.create_experiment_directory(
