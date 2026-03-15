@@ -517,7 +517,7 @@ if __name__ == "__main__":
     logger = get_logger(__name__)
 
     import wandb
-    wandb.init(project="wsj0mix-separation")
+    wandb.init(project="sepformer-speech-separation")
     wandb.save(os.path.join(hparams["output_folder"], "**", "*"), base_path=hparams["output_folder"], policy="live")
 
     # Create experiment directory
