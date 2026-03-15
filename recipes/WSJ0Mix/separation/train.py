@@ -415,17 +415,12 @@ def dataio_prep(hparams):
         replacements={"data_root": hparams["data_folder"]},
     )
 
-    valid_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
-        csv_path=hparams["valid_data"],
-        replacements={"data_root": hparams["data_folder"]},
-    )
-
     test_data = sb.dataio.dataset.DynamicItemDataset.from_csv(
         csv_path=hparams["test_data"],
         replacements={"data_root": hparams["data_folder"]},
     )
 
-    datasets = [train_data, valid_data, test_data]
+    datasets = [train_data, test_data]
 
     # 2. Provide audio pipelines
 
@@ -468,7 +463,7 @@ def dataio_prep(hparams):
             datasets, ["id", "mix_sig", "s1_sig", "s2_sig"]
         )
 
-    return train_data, valid_data, test_data
+    return train_data, test_data
 
 
 if __name__ == "__main__":
@@ -491,7 +486,7 @@ if __name__ == "__main__":
     )
 
     # Update precision to bf16 if the device is CPU and precision is fp16
-    if run_opts.get("device") == "cpu" and hparams.get("precision") == "fp16":
+    if run_opts.device== "cpu" and hparams.get("precision") == "fp16":
         hparams["precision"] = "bf16"
 
     # Check if wsj0_tr is set with dynamic mixing
@@ -564,9 +559,9 @@ if __name__ == "__main__":
             "dataloader_opts": hparams["dataloader_opts"],
         }
         train_data = dynamic_mix_data_prep(dm_hparams)
-        _, valid_data, test_data = dataio_prep(hparams)
+        _, test_data = dataio_prep(hparams)
     else:
-        train_data, valid_data, test_data = dataio_prep(hparams)
+        train_data, test_data = dataio_prep(hparams)
 
     # Load pretrained model if pretrained_separator is present in the yaml
     if "pretrained_separator" in hparams:
@@ -591,7 +586,6 @@ if __name__ == "__main__":
     separator.fit(
         separator.hparams.epoch_counter,
         train_data,
-        valid_data,
         train_loader_kwargs=hparams["dataloader_opts"],
         valid_loader_kwargs=hparams["dataloader_opts"],
     )

@@ -105,10 +105,10 @@ kernel_size: 16
 kernel_stride: 8
 
 # Dataloader options
-# Set num_workers: 0 on MacOS due to behavior of the multiprocessing library
+# Set num_workers: 0 on Windows/MacOS due to behavior of the multiprocessing library
 dataloader_opts:
     batch_size: !ref <batch_size>
-    num_workers: 3
+    num_workers: 0
 
 
 # Specifying the network
