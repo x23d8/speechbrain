@@ -251,6 +251,14 @@ class Separation(sb.Brain):
                 self._best_val_loss = val_loss
                 self._no_improve_count = 0
                 self._save_best_to_results(epoch, val_loss)
+
+                # Update wandb summary with best metrics
+                if wandb.run is not None:
+                    wandb.run.summary["best_val_loss"] = val_loss
+                    wandb.run.summary["best_si_snr_dB"] = -val_loss
+                    wandb.run.summary["best_epoch"] = epoch
+                    wandb.run.summary["best_train_loss"] = train_loss
+                    wandb.run.summary["best_lr"] = current_lr
             else:
                 self._no_improve_count = getattr(self, "_no_improve_count", 0) + 1
 
@@ -803,6 +811,14 @@ if __name__ == "__main__":
         name=_wandb_run_name,  # None → WandB auto-generates a name
         config={k: v for k, v in hparams.items() if isinstance(v, (int, float, str, bool))},
     )
+
+    # ── Define wandb metrics so the dashboard uses epoch as x-axis ──
+    wandb.define_metric("epoch")
+    wandb.define_metric("train_loss", step_metric="epoch", summary="min")
+    wandb.define_metric("val_loss",   step_metric="epoch", summary="min")
+    wandb.define_metric("lr",         step_metric="epoch", summary="last")
+    wandb.define_metric("grad_norm",  step_metric="epoch", summary="mean")
+
     wandb.save(
         os.path.join(hparams["output_folder"], "**", "*"),
         base_path=hparams["output_folder"],
@@ -1016,3 +1032,11 @@ if __name__ == "__main__":
     # Eval
     separator.evaluate(test_data, min_key="si-snr")
     separator.save_results(test_data)
+
+    # ── Final wandb summary ──
+    if wandb.run is not None:
+        best_loss = getattr(separator, "_best_val_loss", None)
+        if best_loss is not None:
+            wandb.run.summary["final_best_val_loss"] = best_loss
+            wandb.run.summary["final_best_si_snr_dB"] = -best_loss
+        wandb.finish()
