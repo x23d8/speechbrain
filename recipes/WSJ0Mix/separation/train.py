@@ -23,7 +23,10 @@ Authors
 
 import csv
 import os
+import shutil
+import signal
 import sys
+from datetime import datetime
 
 import numpy as np
 import torch
@@ -122,14 +125,15 @@ class Separation(sb.Brain):
             else:
                 loss = loss.mean()
 
+        grad_norm = 0.0
         if loss.nelement() > 0 and loss < self.hparams.loss_upper_lim:
             self.scaler.scale(loss).backward()
             if self.hparams.clip_grad_norm >= 0:
                 self.scaler.unscale_(self.optimizer)
-                torch.nn.utils.clip_grad_norm_(
+                grad_norm = torch.nn.utils.clip_grad_norm_(
                     self.modules.parameters(),
                     self.hparams.clip_grad_norm,
-                )
+                ).item()
             self.scaler.step(self.optimizer)
             self.scaler.update()
         else:
@@ -140,11 +144,17 @@ class Separation(sb.Brain):
             loss.data = torch.tensor(0.0).to(self.device)
         self.optimizer.zero_grad()
 
+        # Accumulate grad norm for epoch-level logging
+        if not hasattr(self, "_grad_norm_accum"):
+            self._grad_norm_accum = []
+        self._grad_norm_accum.append(grad_norm)
+
         import wandb
         if wandb.run is not None:
             wandb.log({
-                "train_step_loss": loss.item(),
-                "train_step_si-snr": -loss.item()
+                "train_step_loss": -loss.item(),   # SI-SNR (higher = better)
+                "train_step_si_snr": -loss.item(),
+                "step_grad_norm": grad_norm,
             })
 
         return loss.detach().cpu()
@@ -183,9 +193,18 @@ class Separation(sb.Brain):
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of a epoch."""
         # Compute/store important stats
+        # stage_loss is the *negative* SI-SNR (lower = better, per SpeechBrain convention)
         stage_stats = {"si-snr": stage_loss}
         if stage == sb.Stage.TRAIN:
             self.train_stats = stage_stats
+            # Reset grad norm accumulator after training stage
+            self._grad_norm_accum = getattr(self, "_grad_norm_accum", [])
+            self._epoch_grad_norm = (
+                float(np.mean(self._grad_norm_accum))
+                if self._grad_norm_accum
+                else 0.0
+            )
+            self._grad_norm_accum = []
 
         # Perform end-of-iteration things, like annealing, logging, etc.
         if stage == sb.Stage.VALID:
@@ -201,6 +220,11 @@ class Separation(sb.Brain):
                 # if we do not use the reducelronplateau, we do not change the lr
                 current_lr = self.hparams.optimizer.optim.param_groups[0]["lr"]
 
+            # loss = -SI-SNR  (stage_loss is already negative SI-SNR in SB)
+            train_loss = self.train_stats["si-snr"]   # -SI-SNR (lower = better)
+            val_loss   = stage_stats["si-snr"]         # -SI-SNR (lower = better)
+            grad_norm  = getattr(self, "_epoch_grad_norm", 0.0)
+
             self.hparams.train_logger.log_stats(
                 stats_meta={"epoch": epoch, "lr": current_lr},
                 train_stats=self.train_stats,
@@ -210,24 +234,147 @@ class Separation(sb.Brain):
             import wandb
             if wandb.run is not None:
                 wandb.log({
-                    "epoch": epoch,
-                    "lr": current_lr,
-                    "train_si-snr": self.train_stats["si-snr"],
-                    "valid_si-snr": stage_stats["si-snr"],
+                    "epoch":      epoch,
+                    "train_loss": train_loss,   # -SI-SNR
+                    "val_loss":   val_loss,     # -SI-SNR
+                    "lr":         current_lr,
+                    "grad_norm":  grad_norm,
+                    # Also log SI-SNR directly for convenience
+                    "train_si_snr": -train_loss,
+                    "val_si_snr":   -val_loss,
                 })
 
+            # ----------------------------------------------------------------
+            # Save checkpoint; keep only the best (lowest si-snr = best SI-SNR)
+            # ----------------------------------------------------------------
             self.checkpointer.save_and_keep_only(
-                meta={"si-snr": stage_stats["si-snr"]}, min_keys=["si-snr"]
+                meta={"si-snr": val_loss}, min_keys=["si-snr"]
             )
+
+            # ----------------------------------------------------------------
+            # Best-model copy to results/
+            # ----------------------------------------------------------------
+            is_better = (
+                not hasattr(self, "_best_val_loss")
+                or val_loss < self._best_val_loss
+            )
+            if is_better:
+                self._best_val_loss = val_loss
+                self._no_improve_count = 0
+                self._save_best_to_results(epoch, val_loss)
+            else:
+                self._no_improve_count = getattr(self, "_no_improve_count", 0) + 1
+
+            # ----------------------------------------------------------------
+            # Early stopping
+            # ----------------------------------------------------------------
+            patience = getattr(self.hparams, "early_stop_patience", 10)
+            if self._no_improve_count >= patience:
+                logger.info(
+                    f"Early stopping triggered: no improvement for {patience} epochs."
+                )
+                # Auto-save final state before stopping
+                self._emergency_save(epoch, reason="early_stopping")
+                self.hparams.epoch_counter.current = self.hparams.epoch_counter.limit
+
         elif stage == sb.Stage.TEST:
             self.hparams.train_logger.log_stats(
                 stats_meta={"Epoch loaded": self.hparams.epoch_counter.current},
                 test_stats=stage_stats,
             )
-            
+
             import wandb
             if wandb.run is not None:
-                wandb.log({"test_si-snr": stage_stats["si-snr"]})
+                wandb.log({"test_si_snr": -stage_stats["si-snr"]})
+
+    # ------------------------------------------------------------------
+    # Helper: copy best checkpoint to results/best_model/
+    # ------------------------------------------------------------------
+    def _save_best_to_results(self, epoch, val_loss):
+        """Copies the current best checkpoint to a stable results/ directory."""
+        results_dir = getattr(
+            self.hparams, "results_folder",
+            os.path.join(self.hparams.output_folder, "..", "results")
+        )
+        best_dir = os.path.join(results_dir, "best_model")
+        os.makedirs(best_dir, exist_ok=True)
+
+        # Copy SpeechBrain checkpoint folder
+        ckpt_dir = self.checkpointer.checkpoints_dir
+        # Find the latest checkpoint folder (most recently modified)
+        ckpt_entries = [
+            os.path.join(ckpt_dir, d)
+            for d in os.listdir(ckpt_dir)
+            if os.path.isdir(os.path.join(ckpt_dir, d))
+        ]
+        if ckpt_entries:
+            latest_ckpt = max(ckpt_entries, key=os.path.getmtime)
+            dest = os.path.join(best_dir, "checkpoint")
+            if os.path.exists(dest):
+                shutil.rmtree(dest)
+            shutil.copytree(latest_ckpt, dest)
+
+        # Write a small metadata file
+        meta_path = os.path.join(best_dir, "best_info.txt")
+        with open(meta_path, "w", encoding="utf-8") as f:
+            f.write(f"epoch:     {epoch}\n")
+            f.write(f"val_loss:  {val_loss:.6f}  (-SI-SNR, lower=better)\n")
+            f.write(f"si_snr:    {-val_loss:.6f} dB\n")
+            f.write(f"saved_at:  {datetime.now().isoformat()}\n")
+
+        logger.info(
+            f"Best model saved to {best_dir} "
+            f"(epoch={epoch}, val_loss={val_loss:.4f}, SI-SNR={-val_loss:.4f} dB)"
+        )
+
+    # ------------------------------------------------------------------
+    # Helper: emergency save on crash / early-stop / interrupt
+    # ------------------------------------------------------------------
+    def _emergency_save(self, epoch, reason="interrupt"):
+        """Saves current model state to results/emergency_save/ for recovery."""
+        results_dir = getattr(
+            self.hparams, "results_folder",
+            os.path.join(self.hparams.output_folder, "..", "results")
+        )
+        save_dir = os.path.join(
+            results_dir,
+            f"emergency_save_{reason}_epoch{epoch}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        )
+        os.makedirs(save_dir, exist_ok=True)
+
+        # Save model weights
+        try:
+            torch.save(
+                {k: v.state_dict() for k, v in self.modules.items()},
+                os.path.join(save_dir, "modules.pt"),
+            )
+            torch.save(
+                self.optimizer.state_dict(),
+                os.path.join(save_dir, "optimizer.pt"),
+            )
+            # Copy the SpeechBrain checkpoint as well
+            ckpt_dir = self.checkpointer.checkpoints_dir
+            ckpt_entries = [
+                os.path.join(ckpt_dir, d)
+                for d in os.listdir(ckpt_dir)
+                if os.path.isdir(os.path.join(ckpt_dir, d))
+            ]
+            if ckpt_entries:
+                latest_ckpt = max(ckpt_entries, key=os.path.getmtime)
+                shutil.copytree(latest_ckpt, os.path.join(save_dir, "sb_checkpoint"))
+
+            with open(os.path.join(save_dir, "info.txt"), "w", encoding="utf-8") as f:
+                f.write(f"reason:   {reason}\n")
+                f.write(f"epoch:    {epoch}\n")
+                f.write(f"saved_at: {datetime.now().isoformat()}\n")
+                best_loss = getattr(self, "_best_val_loss", None)
+                if best_loss is not None:
+                    f.write(f"best_val_loss: {best_loss:.6f}\n")
+                    f.write(f"best_si_snr:   {-best_loss:.6f} dB\n")
+
+            logger.info(f"Emergency save to {save_dir} (reason={reason})")
+        except Exception as e:
+            logger.error(f"Emergency save failed: {e}")
 
     def add_speed_perturb(self, targets, targ_lens):
         """Adds speed perturbation and random_shift to the input signals"""
@@ -518,7 +665,11 @@ if __name__ == "__main__":
 
     import wandb
     wandb.init(project="sepformer-speech-separation")
-    wandb.save(os.path.join(hparams["output_folder"], "**", "*"), base_path=hparams["output_folder"], policy="live")
+    wandb.save(
+        os.path.join(hparams["output_folder"], "**", "*"),
+        base_path=hparams["output_folder"],
+        policy="live",
+    )
 
     # Create experiment directory
     sb.create_experiment_directory(
@@ -624,13 +775,40 @@ if __name__ == "__main__":
         for module in separator.modules.values():
             separator.reset_layer_recursively(module)
 
+    # ---------------------------------------------------------------
+    # Register interrupt / crash handler for emergency checkpoint save
+    # ---------------------------------------------------------------
+    def _handle_signal(signum, frame):
+        logger.warning(f"Signal {signum} received - triggering emergency save ...")
+        current_epoch = separator.hparams.epoch_counter.current
+        separator._emergency_save(current_epoch, reason=f"signal_{signum}")
+        import wandb
+        if wandb.run is not None:
+            wandb.finish()
+        sys.exit(1)
+
+    signal.signal(signal.SIGINT, _handle_signal)
+    try:
+        signal.signal(signal.SIGTERM, _handle_signal)
+    except (OSError, ValueError):
+        pass  # SIGTERM may not be available on all platforms (e.g., Windows)
+
     # Training
-    separator.fit(
-        separator.hparams.epoch_counter,
-        train_data,
-        train_loader_kwargs=hparams["dataloader_opts"],
-        valid_loader_kwargs=hparams["dataloader_opts"],
-    )
+    try:
+        separator.fit(
+            separator.hparams.epoch_counter,
+            train_data,
+            train_loader_kwargs=hparams["dataloader_opts"],
+            valid_loader_kwargs=hparams["dataloader_opts"],
+        )
+    except Exception as exc:
+        logger.error(f"Training failed with exception: {exc}")
+        current_epoch = separator.hparams.epoch_counter.current
+        separator._emergency_save(current_epoch, reason="exception")
+        import wandb
+        if wandb.run is not None:
+            wandb.finish()
+        raise
 
     # Eval
     separator.evaluate(test_data, min_key="si-snr")
