@@ -753,7 +753,16 @@ if __name__ == "__main__":
     for _dest, _yaml_key in _OVERRIDE_MAP.items():
         _val = getattr(_known, _dest, None)
         if _val is not None:
-            _cli_overrides.append(f"{_yaml_key}={_val}")
+            # hyperpyyaml expects YAML syntax: "key: value"
+            # Quote string values so paths with backslashes/spaces are safe.
+            if isinstance(_val, str):
+                # Escape any backslashes and double-quote the string
+                _escaped = _val.replace("\\", "\\\\").replace('"', '\\"')
+                _cli_overrides.append(f'{_yaml_key}: "{_escaped}"')
+            elif isinstance(_val, bool):
+                _cli_overrides.append(f"{_yaml_key}: {'True' if _val else 'False'}")
+            else:
+                _cli_overrides.append(f"{_yaml_key}: {_val}")
 
     # Store WandB settings separately (not YAML keys)
     _wandb_project  = _known.wandb_project  or "sepformer-speech-separation"
@@ -764,14 +773,44 @@ if __name__ == "__main__":
     # ---------------------------------------------------------------
     hparams_file, run_opts, overrides = sb.parse_arguments(_sb_argv)
 
-    # Merge CLI overrides (CLI wins over YAML defaults, but YAML explicit
-    # overrides on the command line via key=value still take precedence if
-    # listed after our flags — handled by hyperpyyaml's last-write-wins)
+    # Merge: our CLI overrides come BEFORE the SpeechBrain overrides so that
+    # any explicit key=value passed after the YAML file on the command line
+    # (SpeechBrain style) still takes final precedence.
     if _cli_overrides:
-        overrides = (overrides + "\n" if overrides else "") + "\n".join(_cli_overrides)
+        _cli_block = "\n".join(_cli_overrides)
+        overrides = _cli_block + ("\n" + overrides if overrides else "")
+
+    # ---------------------------------------------------------------
+    # Guard: data_folder is !PLACEHOLDER in the YAML — must be supplied.
+    # Check now so the user gets a clear message instead of a cryptic
+    # hyperpyyaml ValueError.
+    # ---------------------------------------------------------------
+    _data_folder_in_overrides = any(
+        "data_folder" in line for line in (_cli_overrides + [overrides or ""])
+    )
+    if not _data_folder_in_overrides:
+        sys.exit(
+            "\n[ERROR] 'data_folder' is required but was not provided.\n"
+            "Please supply it in one of these ways:\n"
+            "  (1) --data_folder /path/to/your/dataset    (new CLI flag)\n"
+            "  (2) data_folder=/path/to/your/dataset      (SpeechBrain-style, after the YAML file)\n"
+            "\nExample:\n"
+            "  python train.py hparams/sepformer-customdataset.yaml "
+            "--data_folder /kaggle/input/wsj0mix\n"
+        )
 
     with open(hparams_file, encoding="utf-8") as fin:
-        hparams = load_hyperpyyaml(fin, overrides)
+        try:
+            hparams = load_hyperpyyaml(fin, overrides)
+        except ValueError as _e:
+            _msg = str(_e)
+            if "PLACEHOLDER" in _msg:
+                _key = _msg.split("'")[1] if "'" in _msg else "unknown"
+                sys.exit(
+                    f"\n[ERROR] YAML key '{_key}' is required but not set.\n"
+                    f"Pass it as:  --{_key} VALUE   or   {_key}=VALUE\n"
+                )
+            raise
 
 
     # Initialize ddp (useful only for multi-GPU DDP training)
