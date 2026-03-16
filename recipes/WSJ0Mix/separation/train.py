@@ -40,6 +40,14 @@ from speechbrain.dataio import audio_io
 from speechbrain.utils.distributed import run_on_main
 from speechbrain.utils.logger import get_logger
 
+import wandb
+
+os.environ["WANDB_PROJECT"] = "sepformer-speech-separation"
+os.environ["WANDB_ENTITY"] = "slp301_ai1802"
+
+# Add repo root to path so loss.py can be imported from f:\sb_sep
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
+from loss import pit_sisnr_loss
 
 # Define training procedure
 class Separation(sb.Brain):
@@ -97,8 +105,16 @@ class Separation(sb.Brain):
         return est_source, targets
 
     def compute_objectives(self, predictions, targets):
-        """Computes the sinr loss"""
-        return self.hparams.loss(targets, predictions)
+        """Computes the PIT SI-SNR loss using pit_sisnr_loss from loss.py.
+
+        Both tensors come from compute_forward as [B, T, C].
+        pit_sisnr_loss expects [B, C, T], so we permute before calling.
+        Returns a scalar (already averaged over batch & permutations).
+        """
+        # [B, T, C] -> [B, C, T]
+        est = predictions.permute(0, 2, 1)
+        tgt = targets.permute(0, 2, 1)
+        return pit_sisnr_loss(est, tgt)
 
     def fit_batch(self, batch):
         """Trains one batch"""
@@ -114,19 +130,11 @@ class Separation(sb.Brain):
             predictions, targets = self.compute_forward(
                 mixture, targets, sb.Stage.TRAIN
             )
+            # pit_sisnr_loss returns a scalar (-SI-SNR, lower = better)
             loss = self.compute_objectives(predictions, targets)
 
-            # hard threshold the easy dataitems
-            if self.hparams.threshold_byloss:
-                th = self.hparams.threshold
-                loss = loss[loss > th]
-                if loss.nelement() > 0:
-                    loss = loss.mean()
-            else:
-                loss = loss.mean()
-
         grad_norm = 0.0
-        if loss.nelement() > 0 and loss < self.hparams.loss_upper_lim:
+        if loss.item() < self.hparams.loss_upper_lim:
             self.scaler.scale(loss).backward()
             if self.hparams.clip_grad_norm >= 0:
                 self.scaler.unscale_(self.optimizer)
@@ -139,9 +147,9 @@ class Separation(sb.Brain):
         else:
             self.nonfinite_count += 1
             logger.info(
-                f"infinite loss or empty loss! it happened {self.nonfinite_count} times so far - skipping this batch"
+                f"infinite loss! it happened {self.nonfinite_count} times so far - skipping this batch"
             )
-            loss.data = torch.tensor(0.0).to(self.device)
+            loss = torch.tensor(0.0, device=self.device)
         self.optimizer.zero_grad()
 
         # Accumulate grad norm for epoch-level logging
@@ -149,12 +157,10 @@ class Separation(sb.Brain):
             self._grad_norm_accum = []
         self._grad_norm_accum.append(grad_norm)
 
-        import wandb
         if wandb.run is not None:
             wandb.log({
-                "train_step_loss": -loss.item(),   # SI-SNR (higher = better)
-                "train_step_si_snr": -loss.item(),
-                "step_grad_norm": grad_norm,
+                "train_step_loss": loss.item(),
+                "step_grad_norm":  grad_norm,
             })
 
         return loss.detach().cpu()
@@ -169,6 +175,7 @@ class Separation(sb.Brain):
 
         with torch.no_grad():
             predictions, targets = self.compute_forward(mixture, targets, stage)
+            # pit_sisnr_loss returns a scalar
             loss = self.compute_objectives(predictions, targets)
 
         # Manage audio file saving
@@ -180,20 +187,19 @@ class Separation(sb.Brain):
             else:
                 self.save_audio(snt_id[0], mixture, targets, predictions)
 
-        import wandb
         if wandb.run is not None:
             if stage == sb.Stage.VALID:
                 wandb.log({
-                    "val_loss":    loss.mean().item(),
-                    "val_si_snr": -loss.mean().item(),
+                    "val_loss":    loss.item(),
+                    "val_si_snr": -loss.item(),
                 })
             else:  # TEST
                 wandb.log({
-                    "test_step_loss":   loss.mean().item(),
-                    "test_step_si_snr": -loss.mean().item(),
+                    "test_step_loss":   loss.item(),
+                    "test_step_si_snr": -loss.item(),
                 })
 
-        return loss.mean().detach()
+        return loss.detach()
 
     def on_stage_end(self, stage, stage_loss, epoch):
         """Gets called at the end of a epoch."""
@@ -236,16 +242,13 @@ class Separation(sb.Brain):
                 valid_stats=stage_stats,
             )
 
-            import wandb
             if wandb.run is not None:
                 wandb.log({
-                    "epoch":        epoch,
-                    "train_loss":   train_loss,    # -SI-SNR (lower = better)
-                    "val_loss":     val_loss,      # -SI-SNR (lower = better)
-                    "lr":           current_lr,
-                    "grad_norm":    grad_norm,
-                    "train_si_snr": -train_loss,   # SI-SNR in dB (higher = better)
-                    "val_si_snr":   -val_loss,     # SI-SNR in dB (higher = better)
+                    "epoch":      epoch,
+                    "train_loss": train_loss,
+                    "val_loss":   val_loss,
+                    "lr":         current_lr,
+                    "grad_norm":  grad_norm,
                 })
 
             # ----------------------------------------------------------------
@@ -287,9 +290,8 @@ class Separation(sb.Brain):
                 test_stats=stage_stats,
             )
 
-            import wandb
             if wandb.run is not None:
-                wandb.log({"test_si_snr": -stage_stats["si-snr"]})
+                wandb.log({"test_loss": stage_stats["si-snr"]})
 
     # ------------------------------------------------------------------
     # Helper: copy best checkpoint to results/best_model/
