@@ -652,10 +652,127 @@ def dataio_prep(hparams):
 
 
 if __name__ == "__main__":
-    # Load hyperparameters file with command-line overrides
-    hparams_file, run_opts, overrides = sb.parse_arguments(sys.argv[1:])
+    # ---------------------------------------------------------------
+    # Custom CLI arguments (override any YAML value without editing it)
+    #
+    # Usage examples:
+    #   python train.py hparams/sepformer-customdataset.yaml --epochs 100
+    #   python train.py hparams/sepformer-customdataset.yaml --lr 0.0001 --batch_size 2
+    #   python train.py hparams/sepformer-customdataset.yaml --seed 42 --precision bf16
+    # ---------------------------------------------------------------
+    import argparse
+
+    _cli = argparse.ArgumentParser(
+        description="SepFormer Speech Separation — CLI overrides for YAML hparams",
+        # Pass unknown args through so SpeechBrain can handle --device, --debug, etc.
+        add_help=False,
+    )
+
+    # ---- Training schedule ----
+    _cli.add_argument("--epochs",            type=int,   default=None, metavar="N",
+                      help="Total training epochs   (YAML: N_epochs, default 200)")
+    _cli.add_argument("--lr",                type=float, default=None, metavar="F",
+                      help="Learning rate            (YAML: lr, default 0.00015)")
+    _cli.add_argument("--batch_size",        type=int,   default=None, metavar="N",
+                      help="Batch size               (YAML: batch_size, default 1)")
+    _cli.add_argument("--clip_grad_norm",    type=float, default=None, metavar="F",
+                      help="Gradient clip max norm   (YAML: clip_grad_norm, default 5)")
+    _cli.add_argument("--seed",              type=int,   default=None, metavar="N",
+                      help="Random seed              (YAML: seed, default 1234)")
+    _cli.add_argument("--precision",         type=str,   default=None,
+                      choices=["fp32", "fp16", "bf16"],
+                      help="Training precision       (YAML: precision, default fp32)")
+
+    # ---- Early stopping ----
+    _cli.add_argument("--early_stop_patience", type=int, default=None, metavar="N",
+                      help="Early-stop patience in epochs (default 10, 0 = disabled)")
+
+    # ---- Data / experiment ----
+    _cli.add_argument("--data_folder",       type=str,   default=None, metavar="PATH",
+                      help="Root data folder         (YAML: data_folder — required if not set in YAML)")
+    _cli.add_argument("--experiment_name",   type=str,   default=None, metavar="STR",
+                      help="Experiment name tag      (YAML: experiment_name)")
+    _cli.add_argument("--num_spks",          type=int,   default=None, choices=[2, 3],
+                      help="Number of speakers       (YAML: num_spks, default 2)")
+    _cli.add_argument("--sample_rate",       type=int,   default=None, metavar="N",
+                      help="Audio sample rate (Hz)   (YAML: sample_rate, default 16000)")
+    _cli.add_argument("--skip_prep",         action="store_true", default=None,
+                      help="Skip data preparation    (YAML: skip_prep, default False)")
+
+    # ---- Augmentation toggles ----
+    _cli.add_argument("--use_wavedrop",      action="store_true", default=None,
+                      help="Enable WaveDrop augmentation")
+    _cli.add_argument("--use_speedperturb",  action="store_true", default=None,
+                      help="Enable speed perturbation")
+    _cli.add_argument("--use_rand_shift",    action="store_true", default=None,
+                      help="Enable random time-shift")
+    _cli.add_argument("--dynamic_mixing",    action="store_true", default=None,
+                      help="Enable dynamic mixing at training time")
+
+    # ---- Encoder / model architecture ----
+    _cli.add_argument("--N_encoder_out",     type=int,   default=None, metavar="N",
+                      help="Encoder output channels  (YAML: N_encoder_out, default 256)")
+    _cli.add_argument("--kernel_size",       type=int,   default=None, metavar="N",
+                      help="Encoder kernel size      (YAML: kernel_size, default 16)")
+    _cli.add_argument("--kernel_stride",     type=int,   default=None, metavar="N",
+                      help="Encoder kernel stride    (YAML: kernel_stride, default 8)")
+
+    # ---- WandB ----
+    _cli.add_argument("--wandb_project",     type=str,   default=None, metavar="STR",
+                      help="WandB project name       (default: sepformer-speech-separation)")
+    _cli.add_argument("--wandb_run_name",    type=str,   default=None, metavar="STR",
+                      help="WandB run name           (default: auto)")
+
+    # Parse only the args we defined; leave the rest for SpeechBrain
+    _known, _sb_argv = _cli.parse_known_args(sys.argv[1:])
+
+    # Build SpeechBrain override strings from the parsed CLI args
+    # Map: argparse dest  ->  YAML key
+    _OVERRIDE_MAP = {
+        "epochs":              "N_epochs",
+        "lr":                  "lr",
+        "batch_size":          "batch_size",
+        "clip_grad_norm":      "clip_grad_norm",
+        "seed":                "seed",
+        "precision":           "precision",
+        "early_stop_patience": "early_stop_patience",
+        "data_folder":         "data_folder",
+        "experiment_name":     "experiment_name",
+        "num_spks":            "num_spks",
+        "sample_rate":         "sample_rate",
+        "skip_prep":           "skip_prep",
+        "use_wavedrop":        "use_wavedrop",
+        "use_speedperturb":    "use_speedperturb",
+        "use_rand_shift":      "use_rand_shift",
+        "dynamic_mixing":      "dynamic_mixing",
+        "N_encoder_out":       "N_encoder_out",
+        "kernel_size":         "kernel_size",
+        "kernel_stride":       "kernel_stride",
+    }
+    _cli_overrides = []
+    for _dest, _yaml_key in _OVERRIDE_MAP.items():
+        _val = getattr(_known, _dest, None)
+        if _val is not None:
+            _cli_overrides.append(f"{_yaml_key}={_val}")
+
+    # Store WandB settings separately (not YAML keys)
+    _wandb_project  = _known.wandb_project  or "sepformer-speech-separation"
+    _wandb_run_name = _known.wandb_run_name  # may be None → auto
+
+    # ---------------------------------------------------------------
+    # SpeechBrain argument parsing (uses remaining argv after our flags)
+    # ---------------------------------------------------------------
+    hparams_file, run_opts, overrides = sb.parse_arguments(_sb_argv)
+
+    # Merge CLI overrides (CLI wins over YAML defaults, but YAML explicit
+    # overrides on the command line via key=value still take precedence if
+    # listed after our flags — handled by hyperpyyaml's last-write-wins)
+    if _cli_overrides:
+        overrides = (overrides + "\n" if overrides else "") + "\n".join(_cli_overrides)
+
     with open(hparams_file, encoding="utf-8") as fin:
         hparams = load_hyperpyyaml(fin, overrides)
+
 
     # Initialize ddp (useful only for multi-GPU DDP training)
     sb.utils.distributed.ddp_init_group(run_opts)
@@ -664,7 +781,11 @@ if __name__ == "__main__":
     logger = get_logger(__name__)
 
     import wandb
-    wandb.init(project="sepformer-speech-separation")
+    wandb.init(
+        project=_wandb_project,
+        name=_wandb_run_name,  # None → WandB auto-generates a name
+        config={k: v for k, v in hparams.items() if isinstance(v, (int, float, str, bool))},
+    )
     wandb.save(
         os.path.join(hparams["output_folder"], "**", "*"),
         base_path=hparams["output_folder"],
