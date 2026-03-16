@@ -157,6 +157,14 @@ class Separation(sb.Brain):
             self._grad_norm_accum = []
         self._grad_norm_accum.append(grad_norm)
 
+        # Per-step wandb logging
+        step_loss = loss.detach().item()
+        if wandb.run is not None:
+            wandb.log({
+                "train_step_loss":   step_loss,
+                "train_step_si-snr": -step_loss,
+            })
+
         return loss.detach().cpu()
 
     def evaluate_batch(self, batch, stage):
@@ -812,12 +820,16 @@ if __name__ == "__main__":
         config={k: v for k, v in hparams.items() if isinstance(v, (int, float, str, bool))},
     )
 
-    # ── Define wandb metrics so the dashboard uses epoch as x-axis ──
+    # ── Define wandb metrics ──
+    # Epoch-level (x-axis = epoch)
     wandb.define_metric("epoch")
     wandb.define_metric("train_loss", step_metric="epoch", summary="min")
     wandb.define_metric("val_loss",   step_metric="epoch", summary="min")
     wandb.define_metric("lr",         step_metric="epoch", summary="last")
     wandb.define_metric("grad_norm",  step_metric="epoch", summary="mean")
+    # Step-level (x-axis = global wandb step)
+    wandb.define_metric("train_step_loss",   summary="min")
+    wandb.define_metric("train_step_si-snr", summary="max")
 
     wandb.save(
         os.path.join(hparams["output_folder"], "**", "*"),
