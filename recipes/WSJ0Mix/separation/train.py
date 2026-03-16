@@ -182,11 +182,16 @@ class Separation(sb.Brain):
 
         import wandb
         if wandb.run is not None:
-            prefix = "valid" if stage == sb.Stage.VALID else "test"
-            wandb.log({
-                f"{prefix}_step_loss": loss.mean().item(),
-                f"{prefix}_step_si-snr": -loss.mean().item()
-            })
+            if stage == sb.Stage.VALID:
+                wandb.log({
+                    "val_loss":    loss.mean().item(),
+                    "val_si_snr": -loss.mean().item(),
+                })
+            else:  # TEST
+                wandb.log({
+                    "test_step_loss":   loss.mean().item(),
+                    "test_step_si_snr": -loss.mean().item(),
+                })
 
         return loss.mean().detach()
 
@@ -234,14 +239,13 @@ class Separation(sb.Brain):
             import wandb
             if wandb.run is not None:
                 wandb.log({
-                    "epoch":      epoch,
-                    "train_loss": train_loss,   # -SI-SNR
-                    "val_loss":   val_loss,     # -SI-SNR
-                    "lr":         current_lr,
-                    "grad_norm":  grad_norm,
-                    # Also log SI-SNR directly for convenience
-                    "train_si_snr": -train_loss,
-                    "val_si_snr":   -val_loss,
+                    "epoch":        epoch,
+                    "train_loss":   train_loss,    # -SI-SNR (lower = better)
+                    "val_loss":     val_loss,      # -SI-SNR (lower = better)
+                    "lr":           current_lr,
+                    "grad_norm":    grad_norm,
+                    "train_si_snr": -train_loss,   # SI-SNR in dB (higher = better)
+                    "val_si_snr":   -val_loss,     # SI-SNR in dB (higher = better)
                 })
 
             # ----------------------------------------------------------------
