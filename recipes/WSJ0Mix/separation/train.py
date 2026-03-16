@@ -157,12 +157,6 @@ class Separation(sb.Brain):
             self._grad_norm_accum = []
         self._grad_norm_accum.append(grad_norm)
 
-        if wandb.run is not None:
-            wandb.log({
-                "train_step_loss": loss.item(),
-                "step_grad_norm":  grad_norm,
-            })
-
         return loss.detach().cpu()
 
     def evaluate_batch(self, batch, stage):
@@ -186,18 +180,6 @@ class Separation(sb.Brain):
                     self.hparams.n_audio_to_save += -1
             else:
                 self.save_audio(snt_id[0], mixture, targets, predictions)
-
-        if wandb.run is not None:
-            if stage == sb.Stage.VALID:
-                wandb.log({
-                    "val_loss":    loss.item(),
-                    "val_si_snr": -loss.item(),
-                })
-            else:  # TEST
-                wandb.log({
-                    "test_step_loss":   loss.item(),
-                    "test_step_si_snr": -loss.item(),
-                })
 
         return loss.detach()
 
@@ -289,9 +271,6 @@ class Separation(sb.Brain):
                 stats_meta={"Epoch loaded": self.hparams.epoch_counter.current},
                 test_stats=stage_stats,
             )
-
-            if wandb.run is not None:
-                wandb.log({"test_loss": stage_stats["si-snr"]})
 
     # ------------------------------------------------------------------
     # Helper: copy best checkpoint to results/best_model/
@@ -550,14 +529,7 @@ class Separation(sb.Brain):
         logger.info(f"Mean SDR is {np.array(all_sdrs).mean()}")
         logger.info(f"Mean SDRi is {np.array(all_sdrs_i).mean()}")
 
-        import wandb
-        if wandb.run is not None:
-            wandb.log({
-                "test_mean_sisnr": np.array(all_sisnrs).mean(),
-                "test_mean_sisnri": np.array(all_sisnrs_i).mean(),
-                "test_mean_sdr": np.array(all_sdrs).mean(),
-                "test_mean_sdri": np.array(all_sdrs_i).mean(),
-            })
+
 
     def save_audio(self, snt_id, mixture, targets, predictions):
         "saves the test audio (mixture, targets, and estimated sources) on disk"
@@ -959,11 +931,76 @@ if __name__ == "__main__":
     except (OSError, ValueError):
         pass  # SIGTERM may not be available on all platforms (e.g., Windows)
 
+    # ---------------------------------------------------------------
+    # Pre-training info: log hyperparams, dataset stats, model params
+    # ---------------------------------------------------------------
+    # Dataset sizes
+    n_train = len(train_data)
+    n_test  = len(test_data)
+
+    # Compute average waveform length from a sample of training data
+    _sample_lens = []
+    _n_sample = min(50, n_train)
+    for _i in range(_n_sample):
+        try:
+            _item = train_data[_i]
+            _sig = _item["mix_sig"] if isinstance(_item, dict) else _item.mix_sig
+            if isinstance(_sig, tuple):
+                _sig = _sig[0]
+            _sample_lens.append(_sig.shape[-1])
+        except Exception:
+            pass
+    avg_waveform_len = float(np.mean(_sample_lens)) if _sample_lens else 0.0
+    avg_duration_sec = avg_waveform_len / hparams["sample_rate"] if avg_waveform_len > 0 else 0.0
+
+    # Model parameter counts
+    total_params     = sum(p.numel() for p in separator.modules.parameters())
+    trainable_params = sum(p.numel() for p in separator.modules.parameters() if p.requires_grad)
+
+    # Print summary
+    logger.info("=" * 60)
+    logger.info("PRE-TRAINING SUMMARY")
+    logger.info("=" * 60)
+    logger.info(f"  Train samples      : {n_train}")
+    logger.info(f"  Test samples       : {n_test}")
+    logger.info(f"  Sample rate        : {hparams['sample_rate']} Hz")
+    logger.info(f"  Avg waveform len   : {avg_waveform_len:.0f} samples ({avg_duration_sec:.2f} s)")
+    logger.info(f"  Num speakers       : {hparams['num_spks']}")
+    logger.info(f"  Batch size         : {hparams['dataloader_opts'].get('batch_size', 'N/A')}")
+    logger.info(f"  Epochs             : {hparams['N_epochs']}")
+    logger.info(f"  Learning rate      : {hparams['lr']}")
+    logger.info(f"  Clip grad norm     : {hparams['clip_grad_norm']}")
+    logger.info(f"  Precision          : {hparams.get('precision', 'fp32')}")
+    logger.info(f"  Total params       : {total_params:,}")
+    logger.info(f"  Trainable params   : {trainable_params:,}")
+    logger.info(f"  Loss function      : pit_sisnr_loss (PIT SI-SNR)")
+    logger.info("=" * 60)
+
+    # Update wandb config with dataset and model info
+    if wandb.run is not None:
+        wandb.config.update({
+            "train_samples":      n_train,
+            "test_samples":       n_test,
+            "sample_rate":        hparams["sample_rate"],
+            "avg_waveform_len":   avg_waveform_len,
+            "avg_duration_sec":   round(avg_duration_sec, 2),
+            "num_spks":           hparams["num_spks"],
+            "batch_size":         hparams["dataloader_opts"].get("batch_size", None),
+            "N_epochs":           hparams["N_epochs"],
+            "lr":                 hparams["lr"],
+            "clip_grad_norm":     hparams["clip_grad_norm"],
+            "precision":          hparams.get("precision", "fp32"),
+            "total_params":       total_params,
+            "trainable_params":   trainable_params,
+            "loss_function":      "pit_sisnr_loss",
+        }, allow_val_change=True)
+
     # Training
     try:
         separator.fit(
             separator.hparams.epoch_counter,
             train_data,
+            valid_set=test_data,
             train_loader_kwargs=hparams["dataloader_opts"],
             valid_loader_kwargs=hparams["dataloader_opts"],
         )
