@@ -1,0 +1,243 @@
+# ################################
+# Model: SepFormer — fine-tuning on custom dataset
+# https://arxiv.org/abs/2010.13154
+#
+# ── WHY THIS CONFIG IS DIFFERENT FROM sepformer-customdataset.yaml ──────────
+#
+# Root-cause analysis of why the previous run (seed=42) underperformed:
+#
+#  1. LR TOO HIGH FOR FINE-TUNING  ← primary cause of degradation
+#       - The original lr=0.00015 is intended for training from scratch.
+#       - After just epoch 1 the pretrained model collapsed from ~15 dB
+#         (expected zero-shot) to 6.2 dB on the training set — classic
+#         catastrophic forgetting.
+#       - Fix: lr=0.000015 (10× lower); with frozen encoder for first
+#         freeze_encoder_epochs epochs to protect pretrained features.
+#
+#  2. WRONG SAMPLE RATE (metadata bug)
+#       - custom data is 8 kHz but yaml said sample_rate: 16000.
+#       - The encoder/decoder kernel sizes and K=250 chunk size in the
+#         Dual-Path model all assume 8 kHz (matching the pretrained
+#         sepformer-wsj02mix weights). Declaring 16000 Hz didn't break the
+#         forward pass but corrupted saved audio headers and any time-based
+#         hparam (training_signal_len, SpeedPerturb.orig_freq, etc.).
+#       - Fix: sample_rate: 8000
+#
+#  3. dont_halve_until_epoch: 30 BLOCKED EARLY LR REDUCTION
+#       - The validation plateau set in already around epoch 35-40, but LR
+#         was locked for the first 30 epochs, so the scheduler could only
+#         react after the model had spent 44 epochs at an already-too-high LR.
+#       - Fix: dont_halve_until_epoch: 5
+#
+#  4. NO DATA AUGMENTATION ON A SMALL DATASET
+#       - Only 4019 training clips (after 10% valid split). The growing
+#         train–valid gap (~4.4 dB at epoch 50) shows the model was
+#         memorising training data.
+#       - Fix: enable use_speedperturb + use_wavedrop; random crop with
+#         limit_training_signal_len.
+#
+#  5. LARGE TRAIN–TEST GAP (~3.6 dB) DESPITE GOOD VALID NUMBERS
+#       - Valid was drawn from the same distribution as train; test was
+#         independent. This means the LR scheduler effectively overfit to
+#         the validation split.
+#       - Fix: valid_split: 0.15 gives a slightly larger, more stable
+#         validation signal; early_stop_patience: 15 to let the model
+#         breathe through noisy validation epochs.
+#
+# ────────────────────────────────────────────────────────────────────────────
+
+seed: 1234
+__set_seed: !apply:speechbrain.utils.seed_everything [!ref <seed>]
+
+# ── Paths ──────────────────────────────────────────────────────────────────
+data_folder: !PLACEHOLDER   # e.g. F:/ducdataset
+
+experiment_name: sepformer-finetune
+output_folder: !ref results/<experiment_name>/<seed>
+train_log: !ref <output_folder>/train_log.txt
+save_folder: !ref <output_folder>/save
+train_data: !ref <save_folder>/custom_train.csv
+valid_data: !ref <save_folder>/custom_valid.csv
+test_data: !ref <save_folder>/custom_test.csv
+skip_prep: False
+
+# ── Pretrained initialisation (same pretrained base as before) ──────────────
+pretrained_separator: !new:speechbrain.utils.parameter_transfer.Pretrainer
+    collect_in: !ref <save_folder>
+    loadables:
+        encoder: !ref <Encoder>
+        decoder: !ref <Decoder>
+        masknet: !ref <MaskNet>
+    paths:
+        encoder: speechbrain/sepformer-wsj02mix/encoder.ckpt
+        decoder: speechbrain/sepformer-wsj02mix/decoder.ckpt
+        masknet: speechbrain/sepformer-wsj02mix/masknet.ckpt
+
+# ── Experiment params ───────────────────────────────────────────────────────
+precision: fp32
+num_spks: 2
+noprogressbar: False
+save_audio: True
+
+# FIX #2: actual data sample rate is 8 kHz (was wrongly set to 16000)
+sample_rate: 8000
+
+# ── Data split (used by prepare_data_v2.py) ─────────────────────────────────
+# FIX #5: 15% valid split gives a more stable validation signal than 10%
+valid_split: 0.15
+split_seed: 1234
+
+# ── Training schedule ───────────────────────────────────────────────────────
+N_epochs: 200
+batch_size: 1
+
+# FIX #1: 10× lower LR to prevent catastrophic forgetting of pretrained weights
+lr: 0.000015
+
+clip_grad_norm: 5
+loss_upper_lim: 999999
+
+# FIX #4: Random crop — forces model to handle partial contexts (augmentation)
+# 32000 samples = 4 seconds at 8 kHz (clips are ~5.3 s so there is room to crop)
+limit_training_signal_len: True
+training_signal_len: 32000
+
+dynamic_mixing: False
+
+# FIX #1b: Freeze the encoder for the first N epochs so the pretrained
+#          encoder features survive early fine-tuning gradient steps.
+#          After this many epochs the encoder is unfrozen and trained
+#          together with MaskNet/Decoder at the same (already-reduced) LR.
+freeze_encoder_epochs: 5
+
+# FIX #3: patience for early stopping (was 10, now 15 — small dataset has
+#         noisy validation curves; we need more room to confirm a real plateau)
+early_stop_patience: 15
+
+# ── Augmentation ────────────────────────────────────────────────────────────
+# FIX #4: enable both augmentations to regularise on a small dataset
+use_wavedrop: True
+use_speedperturb: True
+use_rand_shift: False
+min_shift: -8000
+max_shift: 8000
+
+speed_changes: [95, 100, 105]
+
+speed_perturb: !new:speechbrain.augment.time_domain.SpeedPerturb
+    orig_freq: !ref <sample_rate>
+    speeds: !ref <speed_changes>
+
+drop_freq_low: 0
+drop_freq_high: 1
+drop_freq_count_low: 1
+drop_freq_count_high: 3
+drop_freq_width: 0.05
+
+drop_freq: !new:speechbrain.augment.time_domain.DropFreq
+    drop_freq_low: !ref <drop_freq_low>
+    drop_freq_high: !ref <drop_freq_high>
+    drop_freq_count_low: !ref <drop_freq_count_low>
+    drop_freq_count_high: !ref <drop_freq_count_high>
+    drop_freq_width: !ref <drop_freq_width>
+
+drop_chunk_count_low: 1
+drop_chunk_count_high: 5
+drop_chunk_length_low: 1000
+drop_chunk_length_high: 2000
+
+drop_chunk: !new:speechbrain.augment.time_domain.DropChunk
+    drop_length_low: !ref <drop_chunk_length_low>
+    drop_length_high: !ref <drop_chunk_length_high>
+    drop_count_low: !ref <drop_chunk_count_low>
+    drop_count_high: !ref <drop_chunk_count_high>
+
+# ── Loss thresholding ───────────────────────────────────────────────────────
+threshold_byloss: True
+threshold: -30
+
+# ── Encoder params (unchanged from pretrained architecture) ─────────────────
+N_encoder_out: 256
+out_channels: 256
+kernel_size: 16
+kernel_stride: 8
+
+# ── Dataloader ──────────────────────────────────────────────────────────────
+dataloader_opts:
+    batch_size: !ref <batch_size>
+    num_workers: 0
+
+# ── Model architecture (identical to sepformer-wsj02mix so weights transfer) ─
+Encoder: !new:speechbrain.lobes.models.dual_path.Encoder
+    kernel_size: !ref <kernel_size>
+    out_channels: !ref <N_encoder_out>
+
+SBtfintra: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
+    num_layers: 4
+    d_model: !ref <out_channels>
+    nhead: 8
+    d_ffn: 1024
+    dropout: 0
+    use_positional_encoding: True
+    norm_before: True
+
+SBtfinter: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
+    num_layers: 4
+    d_model: !ref <out_channels>
+    nhead: 8
+    d_ffn: 1024
+    dropout: 0
+    use_positional_encoding: True
+    norm_before: True
+
+MaskNet: !new:speechbrain.lobes.models.dual_path.Dual_Path_Model
+    num_spks: !ref <num_spks>
+    in_channels: !ref <N_encoder_out>
+    out_channels: !ref <out_channels>
+    num_layers: 1
+    K: 250
+    intra_model: !ref <SBtfintra>
+    inter_model: !ref <SBtfinter>
+    norm: ln
+    linear_layer_after_inter_intra: False
+    skip_around_intra: True
+
+Decoder: !new:speechbrain.lobes.models.dual_path.Decoder
+    in_channels: !ref <N_encoder_out>
+    out_channels: 1
+    kernel_size: !ref <kernel_size>
+    stride: !ref <kernel_stride>
+    bias: False
+
+# ── Optimiser ────────────────────────────────────────────────────────────────
+optimizer: !name:torch.optim.Adam
+    lr: !ref <lr>
+    weight_decay: 0
+
+loss: !name:speechbrain.nnet.losses.get_si_snr_with_pitwrapper
+
+# FIX #3: allow LR to drop early (dont_halve_until_epoch was 30, now 5)
+lr_scheduler: !new:speechbrain.nnet.schedulers.ReduceLROnPlateau
+    factor: 0.5
+    patience: 3
+    dont_halve_until_epoch: 5
+
+epoch_counter: !new:speechbrain.utils.epoch_loop.EpochCounter
+    limit: !ref <N_epochs>
+
+modules:
+    encoder: !ref <Encoder>
+    decoder: !ref <Decoder>
+    masknet: !ref <MaskNet>
+
+checkpointer: !new:speechbrain.utils.checkpoints.Checkpointer
+    checkpoints_dir: !ref <save_folder>
+    recoverables:
+        encoder: !ref <Encoder>
+        decoder: !ref <Decoder>
+        masknet: !ref <MaskNet>
+        counter: !ref <epoch_counter>
+        lr_scheduler: !ref <lr_scheduler>
+
+train_logger: !new:speechbrain.utils.train_logger.FileTrainLogger
+    save_file: !ref <train_log>

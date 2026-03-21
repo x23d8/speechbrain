@@ -127,3 +127,27 @@ class SepformerSeparation(Pretrained):
     def forward(self, mix):
         """Runs separation on the input mix"""
         return self.separate_batch(mix)
+from speechbrain.inference.separation import SepformerSeparation
+import torch
+
+if __name__ == "__main__":
+    model = SepformerSeparation.from_hparams(
+        source= r"recipes\WSJ0Mix\pretrained",
+        savedir=r"recipes\WSJ0Mix\pretrained"
+    )
+    
+    from pathlib import Path
+
+    audio_path = r"mix_00001.wav"
+    est_sources = model.separate_file(audio_path)
+
+    print("Output shape:", est_sources.shape)
+
+    # 4. Save kết quả
+    import torchaudio
+    for i in range(est_sources.shape[-1]):
+        torchaudio.save(
+            f"output_spk{i}.wav",
+            est_sources[0, :, i].unsqueeze(0).cpu(),
+            8000  # sample rate của model wsj02mix
+        )

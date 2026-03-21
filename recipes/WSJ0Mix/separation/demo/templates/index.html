@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SepFormer — Speech Separation Demo</title>
+
+  <!-- WaveSurfer.js for waveform visualization -->
+  <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
+
+  <style>
+    /* ── Reset & base ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0f1117;
+      --surface:   #1a1d27;
+      --card:      #22263a;
+      --border:    #2e3350;
+      --accent:    #6c63ff;
+      --accent2:   #00d4aa;
+      --text:      #e2e4ef;
+      --muted:     #7b82a8;
+      --danger:    #ff5c7a;
+      --wave1:     #6c63ff;
+      --wave2:     #00d4aa;
+      --radius:    12px;
+      --shadow:    0 4px 24px rgba(0,0,0,.4);
+    }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem 4rem;
+    }
+
+    /* ── Header ── */
+    header {
+      text-align: center;
+      margin-bottom: 2.5rem;
+    }
+    header h1 {
+      font-size: 2.4rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.5px;
+    }
+    header p {
+      color: var(--muted);
+      margin-top: .5rem;
+      font-size: .95rem;
+    }
+    .badge {
+      display: inline-block;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: .25rem .85rem;
+      font-size: .78rem;
+      color: var(--accent2);
+      margin-top: .8rem;
+    }
+
+    /* ── Main card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 2rem;
+      width: 100%;
+      max-width: 760px;
+    }
+
+    /* ── Drop zone ── */
+    #dropzone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 3rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s, background .2s;
+      position: relative;
+    }
+    #dropzone:hover,
+    #dropzone.dragover {
+      border-color: var(--accent);
+      background: rgba(108,99,255,.06);
+    }
+    #dropzone svg {
+      width: 48px;
+      height: 48px;
+      fill: var(--muted);
+      margin-bottom: 1rem;
+    }
+    #dropzone p { color: var(--muted); font-size: .95rem; }
+    #dropzone span { color: var(--accent); font-weight: 600; }
+    #dropzone input[type=file] {
+      position: absolute; inset: 0; opacity: 0; cursor: pointer;
+    }
+    #file-name {
+      margin-top: .75rem;
+      font-size: .85rem;
+      color: var(--accent2);
+      min-height: 1.2em;
+    }
+
+    /* ── Waveform preview for input ── */
+    #input-wave-wrap {
+      margin-top: 1.5rem;
+      display: none;
+    }
+    .wave-label {
+      font-size: .78rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-bottom: .4rem;
+    }
+    #input-waveform {
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--card);
+    }
+
+    /* ── Separate button ── */
+    #btn-separate {
+      display: block;
+      width: 100%;
+      margin-top: 1.5rem;
+      padding: .85rem;
+      background: linear-gradient(135deg, var(--accent), #8b5cf6);
+      border: none;
+      border-radius: var(--radius);
+      color: #fff;
+      font-size: 1rem;
+      font-weight: 600;
+      letter-spacing: .03em;
+      cursor: pointer;
+      transition: opacity .2s, transform .1s;
+    }
+    #btn-separate:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    #btn-separate:not(:disabled):hover { opacity: .88; transform: translateY(-1px); }
+    #btn-separate:not(:disabled):active { transform: translateY(0); }
+
+    /* ── Progress / spinner ── */
+    #progress-wrap {
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      gap: .75rem;
+      padding: 1.5rem 0;
+    }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #progress-text { color: var(--muted); font-size: .9rem; }
+
+    /* ── Error banner ── */
+    #error-banner {
+      display: none;
+      background: rgba(255,92,122,.12);
+      border: 1px solid var(--danger);
+      border-radius: 8px;
+      padding: .75rem 1rem;
+      color: var(--danger);
+      font-size: .88rem;
+      margin-top: 1rem;
+    }
+
+    /* ── Results section ── */
+    #results {
+      display: none;
+      margin-top: 2rem;
+    }
+    #results h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 1.2rem;
+      color: var(--text);
+    }
+    .source-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.2rem 1.4rem;
+      margin-bottom: 1rem;
+    }
+    .source-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: .8rem;
+    }
+    .source-title {
+      font-weight: 600;
+      font-size: .95rem;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+    .source-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot-1 { background: var(--wave1); }
+    .dot-2 { background: var(--wave2); }
+
+    .source-controls {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+    .btn-icon {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: .4rem .65rem;
+      color: var(--text);
+      cursor: pointer;
+      font-size: .85rem;
+      display: flex;
+      align-items: center;
+      gap: .35rem;
+      transition: border-color .15s, background .15s;
+      text-decoration: none;
+    }
+    .btn-icon:hover { border-color: var(--accent); background: rgba(108,99,255,.1); }
+    .btn-icon svg { width: 16px; height: 16px; fill: currentColor; }
+
+    .waveform-container {
+      border-radius: 6px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    .source-meta {
+      margin-top: .6rem;
+      font-size: .78rem;
+      color: var(--muted);
+    }
+
+    /* ── Info strip ── */
+    #info-strip {
+      display: none;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: .6rem 1rem;
+      margin-bottom: 1.2rem;
+      font-size: .82rem;
+      color: var(--muted);
+      display: none;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .info-item { display: flex; gap: .4rem; }
+    .info-item b { color: var(--text); }
+
+    /* ── Footer ── */
+    footer {
+      margin-top: 3rem;
+      color: var(--muted);
+      font-size: .8rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>SepFormer Speech Separation</h1>
+  <p>Upload a mixed-speech audio file and separate it into individual speaker sources.</p>
+  <span class="badge">SpeechBrain · Custom-trained · 16 kHz</span>
+</header>
+
+<div class="card">
+
+  <!-- Drop zone -->
+  <div id="dropzone">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M12 3a1 1 0 0 1 .707.293l4 4a1 1 0 0 1-1.414 1.414L13 6.414V16a1 1 0 1 1-2 0V6.414L8.707 8.707A1 1 0 0 1 7.293 7.293l4-4A1 1 0 0 1 12 3zM5 17a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1a1 1 0 0 1 1-1z"/>
+    </svg>
+    <p>Drag &amp; drop an audio file here, or <span>click to browse</span></p>
+    <p style="font-size:.8rem;margin-top:.4rem;">Supported: WAV, FLAC, MP3, OGG, M4A · Max 50 MB</p>
+    <input type="file" id="file-input" accept=".wav,.flac,.mp3,.ogg,.m4a" />
+  </div>
+  <div id="file-name"></div>
+
+  <!-- Input waveform preview -->
+  <div id="input-wave-wrap">
+    <div class="wave-label">Input mixture</div>
+    <div id="input-waveform"></div>
+  </div>
+
+  <!-- Separate button -->
+  <button id="btn-separate" disabled>Separate Sources</button>
+
+  <!-- Progress -->
+  <div id="progress-wrap">
+    <div class="spinner"></div>
+    <div id="progress-text">Running inference…</div>
+  </div>
+
+  <!-- Error -->
+  <div id="error-banner"></div>
+
+  <!-- Results -->
+  <div id="results">
+    <div id="info-strip" style="display:flex;"></div>
+    <h2>Separated Sources</h2>
+    <div id="sources-container"></div>
+  </div>
+</div>
+
+<footer>
+  SepFormer · WSJ0-Mix custom checkpoint · seed 42
+</footer>
+
+<script>
+(function () {
+  // ── Element refs ──
+  const dropzone    = document.getElementById('dropzone');
+  const fileInput   = document.getElementById('file-input');
+  const fileName    = document.getElementById('file-name');
+  const inputWaveWrap = document.getElementById('input-wave-wrap');
+  const inputWaveEl = document.getElementById('input-waveform');
+  const btnSeparate = document.getElementById('btn-separate');
+  const progressWrap= document.getElementById('progress-wrap');
+  const progressTxt = document.getElementById('progress-text');
+  const errorBanner = document.getElementById('error-banner');
+  const resultsDiv  = document.getElementById('results');
+  const infoStrip   = document.getElementById('info-strip');
+  const sourcesContainer = document.getElementById('sources-container');
+
+  // ── State ──
+  let selectedFile  = null;
+  let inputWs       = null;   // WaveSurfer for input
+  const sourceWs    = [];     // WaveSurfer instances for outputs
+
+  // WaveSurfer colour palette per source
+  const WAVE_COLORS = ['#6c63ff', '#00d4aa', '#ff8c42', '#e040fb'];
+
+  // ── Drag & drop ──
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    if (f) setFile(f);
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+
+  function setFile(f) {
+    selectedFile = f;
+    fileName.textContent = `Selected: ${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`;
+    btnSeparate.disabled = false;
+    hideError();
+    hideResults();
+    renderInputWaveform(f);
+  }
+
+  function renderInputWaveform(f) {
+    inputWaveWrap.style.display = 'block';
+    if (inputWs) { inputWs.destroy(); inputWs = null; }
+    inputWs = WaveSurfer.create({
+      container: inputWaveEl,
+      waveColor: '#4a5080',
+      progressColor: '#6c63ff',
+      height: 70,
+      barWidth: 2,
+      barGap: 1,
+      barRadius: 2,
+      interact: true,
+    });
+    inputWs.loadBlob(f);
+  }
+
+  // ── Separate ──
+  btnSeparate.addEventListener('click', async () => {
+    if (!selectedFile) return;
+    hideError();
+    hideResults();
+    showProgress('Uploading audio…');
+    btnSeparate.disabled = true;
+
+    const form = new FormData();
+    form.append('audio', selectedFile);
+
+    let data;
+    try {
+      progressTxt.textContent = 'Running inference — this may take a moment…';
+      const resp = await fetch('/separate', { method: 'POST', body: form });
+      data = await resp.json();
+      if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+    } catch (err) {
+      hideProgress();
+      showError(err.message);
+      btnSeparate.disabled = false;
+      return;
+    }
+
+    hideProgress();
+    btnSeparate.disabled = false;
+    renderResults(data);
+  });
+
+  // ── Render results ──
+  function renderResults(data) {
+    // Info strip
+    infoStrip.innerHTML = `
+      <span class="info-item"><span>Duration</span><b>${data.duration}s</b></span>
+      <span class="info-item"><span>Sample rate</span><b>${data.sample_rate} Hz</b></span>
+      <span class="info-item"><span>Sources</span><b>${data.num_spks}</b></span>
+    `;
+    infoStrip.style.display = 'flex';
+
+    sourcesContainer.innerHTML = '';
+    sourceWs.forEach(ws => ws.destroy());
+    sourceWs.length = 0;
+
+    data.sources.forEach((fname, i) => {
+      const color = WAVE_COLORS[i % WAVE_COLORS.length];
+      const dotClass = `dot-${i + 1}`;
+      const audioUrl = `/audio/${fname}`;
+
+      const card = document.createElement('div');
+      card.className = 'source-card';
+      const waveId = `wave-${i}`;
+      card.innerHTML = `
+        <div class="source-header">
+          <div class="source-title">
+            <div class="source-dot ${dotClass}" style="background:${color}"></div>
+            Speaker ${i + 1}
+          </div>
+          <div class="source-controls">
+            <button class="btn-icon" id="play-btn-${i}" title="Play / Pause">
+              <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+              Play
+            </button>
+            <a class="btn-icon" href="${audioUrl}" download="${fname}" title="Download">
+              <svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm7-18v12.17l-3.59-3.58L7 12l5 5 5-5-1.41-1.41L13 14.17V2h-1z"/></svg>
+              Download
+            </a>
+          </div>
+        </div>
+        <div class="waveform-container" id="${waveId}"></div>
+        <div class="source-meta">File: ${fname}</div>
+      `;
+      sourcesContainer.appendChild(card);
+
+      const ws = WaveSurfer.create({
+        container: `#${waveId}`,
+        waveColor: color + '88',
+        progressColor: color,
+        height: 80,
+        barWidth: 2,
+        barGap: 1,
+        barRadius: 2,
+        interact: true,
+      });
+      ws.load(audioUrl);
+      sourceWs.push(ws);
+
+      // Play/pause button
+      const playBtn = document.getElementById(`play-btn-${i}`);
+      ws.on('play', () => {
+        playBtn.innerHTML = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg> Pause`;
+      });
+      ws.on('pause', () => {
+        playBtn.innerHTML = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M8 5v14l11-7z"/></svg> Play`;
+      });
+      ws.on('finish', () => {
+        playBtn.innerHTML = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M8 5v14l11-7z"/></svg> Play`;
+      });
+      playBtn.addEventListener('click', () => {
+        // Pause all others before playing this one
+        sourceWs.forEach((other, j) => { if (j !== i) other.pause(); });
+        ws.playPause();
+      });
+    });
+
+    resultsDiv.style.display = 'block';
+    resultsDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ── Helpers ──
+  function showProgress(msg) {
+    progressTxt.textContent = msg;
+    progressWrap.style.display = 'flex';
+  }
+  function hideProgress() { progressWrap.style.display = 'none'; }
+
+  function showError(msg) {
+    errorBanner.textContent = `Error: ${msg}`;
+    errorBanner.style.display = 'block';
+  }
+  function hideError() { errorBanner.style.display = 'none'; }
+
+  function hideResults() {
+    resultsDiv.style.display = 'none';
+    infoStrip.style.display = 'none';
+  }
+})();
+</script>
+</body>
+</html>
