@@ -4,28 +4,24 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SepFormer — Speech Separation Demo</title>
-
-  <!-- WaveSurfer.js for waveform visualization -->
   <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
-
   <style>
-    /* ── Reset & base ── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:        #0f1117;
-      --surface:   #1a1d27;
-      --card:      #22263a;
-      --border:    #2e3350;
-      --accent:    #6c63ff;
-      --accent2:   #00d4aa;
-      --text:      #e2e4ef;
-      --muted:     #7b82a8;
-      --danger:    #ff5c7a;
-      --wave1:     #6c63ff;
-      --wave2:     #00d4aa;
-      --radius:    12px;
-      --shadow:    0 4px 24px rgba(0,0,0,.4);
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --card:     #22263a;
+      --border:   #2e3350;
+      --accent:   #6c63ff;
+      --accent2:  #00d4aa;
+      --text:     #e2e4ef;
+      --muted:    #7b82a8;
+      --danger:   #ff5c7a;
+      --success:  #22c55e;
+      --warn:     #f59e0b;
+      --radius:   12px;
+      --shadow:   0 4px 24px rgba(0,0,0,.4);
     }
 
     body {
@@ -40,367 +36,592 @@
     }
 
     /* ── Header ── */
-    header {
-      text-align: center;
-      margin-bottom: 2.5rem;
-    }
+    header { text-align: center; margin-bottom: 2rem; }
     header h1 {
-      font-size: 2.4rem;
-      font-weight: 700;
+      font-size: 2.2rem; font-weight: 700;
       background: linear-gradient(135deg, var(--accent), var(--accent2));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
-      letter-spacing: -0.5px;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text; letter-spacing: -.5px;
     }
-    header p {
-      color: var(--muted);
-      margin-top: .5rem;
-      font-size: .95rem;
-    }
-    .badge {
-      display: inline-block;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: .25rem .85rem;
-      font-size: .78rem;
-      color: var(--accent2);
-      margin-top: .8rem;
-    }
+    header p { color: var(--muted); margin-top: .4rem; font-size: .92rem; }
 
-    /* ── Main card ── */
+    /* ── Card ── */
     .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      padding: 2rem;
-      width: 100%;
-      max-width: 760px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); box-shadow: var(--shadow);
+      padding: 1.75rem; width: 100%; max-width: 780px;
+      margin-bottom: 1rem;
     }
+    .card-title {
+      font-size: .8rem; font-weight: 600; letter-spacing: .09em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 1rem;
+      display: flex; align-items: center; gap: .5rem; cursor: pointer;
+      user-select: none;
+    }
+    .card-title .chevron {
+      margin-left: auto; transition: transform .2s; font-size: .9rem;
+    }
+    .card-title.open .chevron { transform: rotate(180deg); }
+    .collapsible-body { overflow: hidden; }
+
+    /* ── Model settings ── */
+    .settings-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: .75rem;
+    }
+    @media (max-width: 580px) { .settings-grid { grid-template-columns: 1fr; } }
+
+    .field-group { display: flex; flex-direction: column; gap: .35rem; }
+    .field-group label { font-size: .78rem; color: var(--muted); }
+    .field-group input[type=text] {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 8px; padding: .5rem .75rem; color: var(--text);
+      font-size: .85rem; width: 100%;
+      transition: border-color .15s;
+    }
+    .field-group input[type=text]:focus {
+      outline: none; border-color: var(--accent);
+    }
+    .settings-actions {
+      display: flex; align-items: center; gap: .75rem;
+      margin-top: .85rem; flex-wrap: wrap;
+    }
+    .btn-load {
+      padding: .5rem 1.2rem; background: var(--accent);
+      border: none; border-radius: 8px; color: #fff;
+      font-size: .88rem; font-weight: 600; cursor: pointer;
+      transition: opacity .15s;
+    }
+    .btn-load:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-load:not(:disabled):hover { opacity: .85; }
+
+    .model-status {
+      font-size: .82rem; display: flex; align-items: center; gap: .4rem;
+    }
+    .status-dot {
+      width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+    }
+    .status-dot.ok      { background: var(--success); }
+    .status-dot.loading { background: var(--warn); animation: pulse 1s infinite; }
+    .status-dot.err     { background: var(--danger); }
+    .status-dot.none    { background: var(--muted); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* ── Input tabs ── */
+    .tab-row {
+      display: flex; gap: 0; border-bottom: 1px solid var(--border);
+      margin-bottom: 1.25rem;
+    }
+    .tab-btn {
+      padding: .6rem 1.2rem; background: none; border: none;
+      color: var(--muted); font-size: .9rem; cursor: pointer;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: color .15s, border-color .15s;
+    }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
 
     /* ── Drop zone ── */
     #dropzone {
-      border: 2px dashed var(--border);
-      border-radius: var(--radius);
-      padding: 3rem 2rem;
-      text-align: center;
-      cursor: pointer;
-      transition: border-color .2s, background .2s;
-      position: relative;
+      border: 2px dashed var(--border); border-radius: var(--radius);
+      padding: 2.5rem 2rem; text-align: center; cursor: pointer;
+      transition: border-color .2s, background .2s; position: relative;
     }
-    #dropzone:hover,
-    #dropzone.dragover {
-      border-color: var(--accent);
-      background: rgba(108,99,255,.06);
+    #dropzone:hover, #dropzone.dragover {
+      border-color: var(--accent); background: rgba(108,99,255,.06);
     }
-    #dropzone svg {
-      width: 48px;
-      height: 48px;
-      fill: var(--muted);
-      margin-bottom: 1rem;
-    }
-    #dropzone p { color: var(--muted); font-size: .95rem; }
+    #dropzone svg { width: 42px; height: 42px; fill: var(--muted); margin-bottom: .75rem; }
+    #dropzone p { color: var(--muted); font-size: .9rem; }
     #dropzone span { color: var(--accent); font-weight: 600; }
-    #dropzone input[type=file] {
-      position: absolute; inset: 0; opacity: 0; cursor: pointer;
-    }
-    #file-name {
-      margin-top: .75rem;
-      font-size: .85rem;
-      color: var(--accent2);
-      min-height: 1.2em;
-    }
+    #dropzone input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    #file-name { margin-top: .65rem; font-size: .82rem; color: var(--accent2); min-height: 1.1em; }
 
-    /* ── Waveform preview for input ── */
-    #input-wave-wrap {
-      margin-top: 1.5rem;
-      display: none;
+    /* ── Record tab ── */
+    .record-area {
+      display: flex; flex-direction: column; align-items: center;
+      gap: 1rem; padding: 1.5rem 1rem;
     }
-    .wave-label {
-      font-size: .78rem;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: .08em;
+    #btn-record {
+      width: 70px; height: 70px; border-radius: 50%;
+      background: var(--card); border: 3px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; transition: border-color .2s, background .2s;
+      flex-shrink: 0;
+    }
+    #btn-record:hover { border-color: var(--accent); }
+    #btn-record.recording {
+      border-color: var(--danger); background: rgba(255,92,122,.12);
+      animation: ring-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes ring-pulse {
+      0%,100% { box-shadow: 0 0 0 0 rgba(255,92,122,.4); }
+      50%      { box-shadow: 0 0 0 10px rgba(255,92,122,0); }
+    }
+    #btn-record svg { width: 28px; height: 28px; }
+    #record-timer {
+      font-size: 1.5rem; font-variant-numeric: tabular-nums;
+      color: var(--text); letter-spacing: .05em; min-width: 4rem; text-align: center;
+    }
+    #record-status { font-size: .82rem; color: var(--muted); }
+    #recorded-wave-wrap { width: 100%; display: none; }
+
+    /* ── Input waveform (shared) ── */
+    #input-wave-section { margin-top: 1.25rem; display: none; }
+    .wave-header {
+      display: flex; align-items: center; justify-content: space-between;
       margin-bottom: .4rem;
     }
-    #input-waveform {
-      border-radius: 8px;
-      overflow: hidden;
-      background: var(--card);
+    .wave-label {
+      font-size: .75rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .08em;
     }
+    .wave-controls { display: flex; gap: .4rem; }
+    #input-waveform { border-radius: 8px; overflow: hidden; background: var(--card); }
 
     /* ── Separate button ── */
     #btn-separate {
-      display: block;
-      width: 100%;
-      margin-top: 1.5rem;
-      padding: .85rem;
+      display: block; width: 100%; margin-top: 1.25rem; padding: .85rem;
       background: linear-gradient(135deg, var(--accent), #8b5cf6);
-      border: none;
-      border-radius: var(--radius);
-      color: #fff;
-      font-size: 1rem;
-      font-weight: 600;
-      letter-spacing: .03em;
-      cursor: pointer;
-      transition: opacity .2s, transform .1s;
+      border: none; border-radius: var(--radius); color: #fff;
+      font-size: 1rem; font-weight: 600; letter-spacing: .03em;
+      cursor: pointer; transition: opacity .2s, transform .1s;
     }
-    #btn-separate:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+    #btn-separate:disabled { opacity: .4; cursor: not-allowed; }
     #btn-separate:not(:disabled):hover { opacity: .88; transform: translateY(-1px); }
     #btn-separate:not(:disabled):active { transform: translateY(0); }
 
-    /* ── Progress / spinner ── */
+    /* ── Progress ── */
     #progress-wrap {
-      display: none;
-      flex-direction: column;
-      align-items: center;
-      gap: .75rem;
-      padding: 1.5rem 0;
+      display: none; flex-direction: column; align-items: center;
+      gap: .65rem; padding: 1.25rem 0;
     }
     .spinner {
-      width: 40px; height: 40px;
-      border: 3px solid var(--border);
-      border-top-color: var(--accent);
-      border-radius: 50%;
+      width: 38px; height: 38px; border: 3px solid var(--border);
+      border-top-color: var(--accent); border-radius: 50%;
       animation: spin .8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    #progress-text { color: var(--muted); font-size: .9rem; }
+    #progress-text { color: var(--muted); font-size: .88rem; }
 
-    /* ── Error banner ── */
+    /* ── Error ── */
     #error-banner {
-      display: none;
-      background: rgba(255,92,122,.12);
-      border: 1px solid var(--danger);
-      border-radius: 8px;
-      padding: .75rem 1rem;
-      color: var(--danger);
-      font-size: .88rem;
-      margin-top: 1rem;
+      display: none; background: rgba(255,92,122,.1);
+      border: 1px solid var(--danger); border-radius: 8px;
+      padding: .7rem 1rem; color: var(--danger);
+      font-size: .85rem; margin-top: .9rem;
     }
 
-    /* ── Results section ── */
-    #results {
-      display: none;
-      margin-top: 2rem;
-    }
-    #results h2 {
-      font-size: 1.1rem;
-      font-weight: 600;
-      margin-bottom: 1.2rem;
-      color: var(--text);
-    }
-    .source-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 1.2rem 1.4rem;
-      margin-bottom: 1rem;
-    }
-    .source-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: .8rem;
-    }
-    .source-title {
-      font-weight: 600;
-      font-size: .95rem;
-      display: flex;
-      align-items: center;
-      gap: .5rem;
-    }
-    .source-dot {
-      width: 10px; height: 10px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-    .dot-1 { background: var(--wave1); }
-    .dot-2 { background: var(--wave2); }
-
-    .source-controls {
-      display: flex;
-      align-items: center;
-      gap: .5rem;
-    }
-    .btn-icon {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: .4rem .65rem;
-      color: var(--text);
-      cursor: pointer;
-      font-size: .85rem;
-      display: flex;
-      align-items: center;
-      gap: .35rem;
-      transition: border-color .15s, background .15s;
-      text-decoration: none;
-    }
-    .btn-icon:hover { border-color: var(--accent); background: rgba(108,99,255,.1); }
-    .btn-icon svg { width: 16px; height: 16px; fill: currentColor; }
-
-    .waveform-container {
-      border-radius: 6px;
-      overflow: hidden;
-      background: var(--surface);
-    }
-
-    .source-meta {
-      margin-top: .6rem;
-      font-size: .78rem;
-      color: var(--muted);
-    }
-
-    /* ── Info strip ── */
+    /* ── Results ── */
+    #results { display: none; }
+    #results h2 { font-size: 1.05rem; font-weight: 600; margin-bottom: 1rem; }
     #info-strip {
-      display: none;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: .6rem 1rem;
-      margin-bottom: 1.2rem;
-      font-size: .82rem;
-      color: var(--muted);
-      display: none;
-      gap: 1.5rem;
-      flex-wrap: wrap;
+      display: none; background: var(--card); border: 1px solid var(--border);
+      border-radius: 8px; padding: .55rem 1rem; margin-bottom: 1.1rem;
+      font-size: .8rem; color: var(--muted); gap: 1.5rem; flex-wrap: wrap;
     }
     .info-item { display: flex; gap: .4rem; }
     .info-item b { color: var(--text); }
 
-    /* ── Footer ── */
-    footer {
-      margin-top: 3rem;
-      color: var(--muted);
-      font-size: .8rem;
-      text-align: center;
+    .source-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 1.1rem 1.3rem; margin-bottom: .85rem;
     }
+    .source-header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: .75rem;
+    }
+    .source-title {
+      font-weight: 600; font-size: .92rem;
+      display: flex; align-items: center; gap: .5rem;
+    }
+    .source-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .source-controls { display: flex; align-items: center; gap: .4rem; }
+
+    .btn-icon {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: .38rem .6rem; color: var(--text);
+      cursor: pointer; font-size: .82rem;
+      display: flex; align-items: center; gap: .3rem;
+      transition: border-color .15s, background .15s; text-decoration: none;
+    }
+    .btn-icon:hover { border-color: var(--accent); background: rgba(108,99,255,.1); }
+    .btn-icon svg { width: 15px; height: 15px; fill: currentColor; }
+
+    .waveform-container { border-radius: 6px; overflow: hidden; background: var(--surface); }
+    .source-meta { margin-top: .5rem; font-size: .75rem; color: var(--muted); }
+
+    footer { margin-top: 2.5rem; color: var(--muted); font-size: .78rem; text-align: center; }
   </style>
 </head>
 <body>
 
 <header>
   <h1>SepFormer Speech Separation</h1>
-  <p>Upload a mixed-speech audio file and separate it into individual speaker sources.</p>
-  <span class="badge">SpeechBrain · Custom-trained · 16 kHz</span>
+  <p>Upload or record a mixture and separate it into individual speaker sources.</p>
 </header>
 
+<!-- ── Model Settings card ── -->
+<div class="card">
+  <div class="card-title" id="settings-toggle">
+    <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:var(--accent);flex-shrink:0">
+      <path d="M19.14 12.94c.04-.3.06-.61.06-.94s-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+    </svg>
+    Model Settings
+    <span class="chevron">▾</span>
+  </div>
+
+  <div class="collapsible-body" id="settings-body">
+    <div class="settings-grid">
+      <div class="field-group">
+        <label>Checkpoint Directory</label>
+        <input type="text" id="inp-ckpt-dir" placeholder="path/to/save/" />
+      </div>
+      <div class="field-group">
+        <label>Hparams YAML</label>
+        <input type="text" id="inp-hparams" placeholder="path/to/hparams.yaml" />
+      </div>
+    </div>
+
+    <div class="settings-actions">
+      <button class="btn-load" id="btn-load-model">Load Model</button>
+      <div class="model-status">
+        <div class="status-dot none" id="status-dot"></div>
+        <span id="status-text">Not loaded</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Input card ── -->
 <div class="card">
 
-  <!-- Drop zone -->
-  <div id="dropzone">
-    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-      <path d="M12 3a1 1 0 0 1 .707.293l4 4a1 1 0 0 1-1.414 1.414L13 6.414V16a1 1 0 1 1-2 0V6.414L8.707 8.707A1 1 0 0 1 7.293 7.293l4-4A1 1 0 0 1 12 3zM5 17a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1a1 1 0 0 1 1-1z"/>
-    </svg>
-    <p>Drag &amp; drop an audio file here, or <span>click to browse</span></p>
-    <p style="font-size:.8rem;margin-top:.4rem;">Supported: WAV, FLAC, MP3, OGG, M4A · Max 50 MB</p>
-    <input type="file" id="file-input" accept=".wav,.flac,.mp3,.ogg,.m4a" />
+  <!-- Tabs -->
+  <div class="tab-row">
+    <button class="tab-btn active" data-tab="upload">Upload File</button>
+    <button class="tab-btn"        data-tab="record">Record Audio</button>
   </div>
-  <div id="file-name"></div>
 
-  <!-- Input waveform preview -->
-  <div id="input-wave-wrap">
-    <div class="wave-label">Input mixture</div>
+  <!-- Upload tab -->
+  <div class="tab-pane active" id="tab-upload">
+    <div id="dropzone">
+      <svg viewBox="0 0 24 24"><path d="M12 3a1 1 0 0 1 .707.293l4 4a1 1 0 0 1-1.414 1.414L13 6.414V16a1 1 0 1 1-2 0V6.414L8.707 8.707A1 1 0 0 1 7.293 7.293l4-4A1 1 0 0 1 12 3zM5 17a1 1 0 0 1 1 1v1h12v-1a1 1 0 1 1 2 0v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1a1 1 0 0 1 1-1z"/></svg>
+      <p>Drag &amp; drop a file here, or <span>click to browse</span></p>
+      <p style="font-size:.78rem;margin-top:.35rem;color:var(--muted)">WAV · FLAC · MP3 · OGG · M4A &nbsp;·&nbsp; Max 50 MB</p>
+      <input type="file" id="file-input" accept=".wav,.flac,.mp3,.ogg,.m4a" />
+    </div>
+    <div id="file-name"></div>
+  </div>
+
+  <!-- Record tab -->
+  <div class="tab-pane" id="tab-record">
+    <div class="record-area">
+      <div id="record-timer">0:00</div>
+      <button id="btn-record" title="Start recording">
+        <!-- Mic icon -->
+        <svg id="icon-mic" viewBox="0 0 24 24" fill="var(--accent2)">
+          <path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.93V20H9v2h6v-2h-2v-2.07A7 7 0 0 0 19 11h-2z"/>
+        </svg>
+        <!-- Stop icon (hidden initially) -->
+        <svg id="icon-stop" viewBox="0 0 24 24" fill="var(--danger)" style="display:none">
+          <path d="M6 6h12v12H6z"/>
+        </svg>
+      </button>
+      <div id="record-status">Click to start recording</div>
+      <div id="recorded-wave-wrap">
+        <div class="wave-label" style="margin-bottom:.4rem">Recorded audio</div>
+        <div id="recorded-waveform" style="border-radius:8px;overflow:hidden;background:var(--card)"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shared: input waveform + playback -->
+  <div id="input-wave-section">
+    <div class="wave-header">
+      <div class="wave-label">Input mixture</div>
+      <div class="wave-controls">
+        <button class="btn-icon" id="btn-play-input">
+          <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Play
+        </button>
+      </div>
+    </div>
     <div id="input-waveform"></div>
   </div>
 
-  <!-- Separate button -->
   <button id="btn-separate" disabled>Separate Sources</button>
 
-  <!-- Progress -->
   <div id="progress-wrap">
     <div class="spinner"></div>
     <div id="progress-text">Running inference…</div>
   </div>
 
-  <!-- Error -->
   <div id="error-banner"></div>
-
-  <!-- Results -->
-  <div id="results">
-    <div id="info-strip" style="display:flex;"></div>
-    <h2>Separated Sources</h2>
-    <div id="sources-container"></div>
-  </div>
 </div>
 
-<footer>
-  SepFormer · WSJ0-Mix custom checkpoint · seed 42
-</footer>
+<!-- ── Results card ── -->
+<div class="card" id="results" style="display:none">
+  <div id="info-strip"></div>
+  <h2>Separated Sources</h2>
+  <div id="sources-container"></div>
+</div>
+
+<footer>SepFormer · SpeechBrain · custom checkpoint</footer>
 
 <script>
 (function () {
-  // ── Element refs ──
-  const dropzone    = document.getElementById('dropzone');
-  const fileInput   = document.getElementById('file-input');
-  const fileName    = document.getElementById('file-name');
-  const inputWaveWrap = document.getElementById('input-wave-wrap');
-  const inputWaveEl = document.getElementById('input-waveform');
-  const btnSeparate = document.getElementById('btn-separate');
-  const progressWrap= document.getElementById('progress-wrap');
-  const progressTxt = document.getElementById('progress-text');
-  const errorBanner = document.getElementById('error-banner');
-  const resultsDiv  = document.getElementById('results');
-  const infoStrip   = document.getElementById('info-strip');
+  // ── DOM refs ──────────────────────────────────────────────────────────────
+  const settingsToggle   = document.getElementById('settings-toggle');
+  const settingsBody     = document.getElementById('settings-body');
+  const inpCkptDir       = document.getElementById('inp-ckpt-dir');
+  const inpHparams       = document.getElementById('inp-hparams');
+  const btnLoadModel     = document.getElementById('btn-load-model');
+  const statusDot        = document.getElementById('status-dot');
+  const statusText       = document.getElementById('status-text');
+
+  const tabBtns          = document.querySelectorAll('.tab-btn');
+  const tabPanes         = document.querySelectorAll('.tab-pane');
+
+  const dropzone         = document.getElementById('dropzone');
+  const fileInput        = document.getElementById('file-input');
+  const fileName         = document.getElementById('file-name');
+
+  const btnRecord        = document.getElementById('btn-record');
+  const iconMic          = document.getElementById('icon-mic');
+  const iconStop         = document.getElementById('icon-stop');
+  const recordTimer      = document.getElementById('record-timer');
+  const recordStatus     = document.getElementById('record-status');
+  const recordedWaveWrap = document.getElementById('recorded-wave-wrap');
+  const recordedWaveEl   = document.getElementById('recorded-waveform');
+
+  const inputWaveSection = document.getElementById('input-wave-section');
+  const inputWaveEl      = document.getElementById('input-waveform');
+  const btnPlayInput     = document.getElementById('btn-play-input');
+
+  const btnSeparate      = document.getElementById('btn-separate');
+  const progressWrap     = document.getElementById('progress-wrap');
+  const progressTxt      = document.getElementById('progress-text');
+  const errorBanner      = document.getElementById('error-banner');
+
+  const resultsDiv       = document.getElementById('results');
+  const infoStrip        = document.getElementById('info-strip');
   const sourcesContainer = document.getElementById('sources-container');
 
-  // ── State ──
+  // ── State ─────────────────────────────────────────────────────────────────
   let selectedFile  = null;
-  let inputWs       = null;   // WaveSurfer for input
-  const sourceWs    = [];     // WaveSurfer instances for outputs
-
-  // WaveSurfer colour palette per source
+  let inputWs       = null;
+  let recordedWs    = null;
+  const sourceWs    = [];
   const WAVE_COLORS = ['#6c63ff', '#00d4aa', '#ff8c42', '#e040fb'];
 
-  // ── Drag & drop ──
+  // Recording state
+  let mediaRecorder   = null;
+  let recordedChunks  = [];
+  let timerInterval   = null;
+  let recordingStart  = 0;
+
+  // ── Model settings collapse ───────────────────────────────────────────────
+  settingsToggle.addEventListener('click', () => {
+    const open = settingsToggle.classList.toggle('open');
+    settingsBody.style.maxHeight = open ? settingsBody.scrollHeight + 'px' : '0';
+    settingsBody.style.overflow  = open ? 'visible' : 'hidden';
+  });
+  // start collapsed
+  settingsBody.style.maxHeight = '0';
+  settingsBody.style.overflow  = 'hidden';
+
+  // Fetch current model info from server and populate fields
+  fetch('/model_info').then(r => r.json()).then(info => {
+    if (info.loaded) {
+      inpCkptDir.value  = info.checkpoint_dir || '';
+      inpHparams.value  = info.hparams_path   || '';
+      setStatus('ok', `Loaded · ${info.num_spks} spk · ${info.sample_rate} Hz · ${info.device}`);
+    } else {
+      inpCkptDir.value  = info.default_ckpt_dir || '';
+      inpHparams.value  = info.default_hparams  || '';
+      setStatus('none', 'Not loaded');
+    }
+  }).catch(() => setStatus('err', 'Could not reach server'));
+
+  // ── Load model ────────────────────────────────────────────────────────────
+  btnLoadModel.addEventListener('click', async () => {
+    const ckpt    = inpCkptDir.value.trim();
+    const hparams = inpHparams.value.trim();
+    if (!ckpt || !hparams) { setStatus('err', 'Both fields are required'); return; }
+
+    btnLoadModel.disabled = true;
+    setStatus('loading', 'Loading model…');
+
+    try {
+      const resp = await fetch('/load_model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ checkpoint_dir: ckpt, hparams_path: hparams }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) { setStatus('err', data.error || 'Load failed'); return; }
+      setStatus('ok', `Loaded · ${data.num_spks} spk · ${data.sample_rate} Hz · ${data.device}`);
+    } catch (e) {
+      setStatus('err', e.message);
+    } finally {
+      btnLoadModel.disabled = false;
+    }
+  });
+
+  function setStatus(state, msg) {
+    statusDot.className = `status-dot ${state}`;
+    statusText.textContent = msg;
+  }
+
+  // ── Tabs ──────────────────────────────────────────────────────────────────
+  tabBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabBtns.forEach(b => b.classList.remove('active'));
+      tabPanes.forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+      // Reset state when switching tabs
+      clearInput();
+    });
+  });
+
+  // ── Upload / drag-drop ────────────────────────────────────────────────────
   dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
   dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
   dropzone.addEventListener('drop', e => {
-    e.preventDefault();
-    dropzone.classList.remove('dragover');
-    const f = e.dataTransfer.files[0];
-    if (f) setFile(f);
+    e.preventDefault(); dropzone.classList.remove('dragover');
+    if (e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]);
   });
-  fileInput.addEventListener('change', () => { if (fileInput.files[0]) setFile(fileInput.files[0]); });
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files[0]) setFile(fileInput.files[0]);
+  });
 
   function setFile(f) {
     selectedFile = f;
-    fileName.textContent = `Selected: ${f.name} (${(f.size / 1024 / 1024).toFixed(2)} MB)`;
+    fileName.textContent = `${f.name}  (${(f.size / 1024 / 1024).toFixed(2)} MB)`;
     btnSeparate.disabled = false;
-    hideError();
-    hideResults();
+    hideError(); hideResults();
     renderInputWaveform(f);
   }
 
+  // ── Recording ─────────────────────────────────────────────────────────────
+  btnRecord.addEventListener('click', async () => {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      stopRecording();
+    } else {
+      await startRecording();
+    }
+  });
+
+  async function startRecording() {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    } catch (e) {
+      recordStatus.textContent = 'Microphone access denied.';
+      return;
+    }
+
+    recordedChunks = [];
+    clearInput();
+
+    // Pick a mime type the browser supports
+    const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/ogg']
+      .find(m => MediaRecorder.isTypeSupported(m)) || '';
+
+    mediaRecorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      finaliseRecording(mimeType);
+    };
+
+    mediaRecorder.start(100);
+    recordingStart = Date.now();
+    btnRecord.classList.add('recording');
+    iconMic.style.display = 'none';
+    iconStop.style.display = '';
+    recordStatus.textContent = 'Recording… click to stop';
+
+    timerInterval = setInterval(() => {
+      const s = Math.floor((Date.now() - recordingStart) / 1000);
+      recordTimer.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    }, 500);
+  }
+
+  function stopRecording() {
+    if (mediaRecorder) mediaRecorder.stop();
+    clearInterval(timerInterval);
+    btnRecord.classList.remove('recording');
+    iconMic.style.display = '';
+    iconStop.style.display = 'none';
+    recordStatus.textContent = 'Processing…';
+  }
+
+  function finaliseRecording(mimeType) {
+    const ext  = mimeType.includes('ogg') ? 'ogg' : 'webm';
+    const blob = new Blob(recordedChunks, { type: mimeType || 'audio/webm' });
+    const file = new File([blob], `recording.${ext}`, { type: blob.type });
+
+    selectedFile = file;
+    btnSeparate.disabled = false;
+    hideError(); hideResults();
+
+    const dur = Math.floor((Date.now() - recordingStart) / 1000);
+    recordStatus.textContent = `Recorded ${Math.floor(dur / 60)}:${String(dur % 60).padStart(2, '0')} — ready to separate`;
+    recordTimer.textContent = `${Math.floor(dur / 60)}:${String(dur % 60).padStart(2, '0')}`;
+
+    // Show waveform preview in the record tab
+    recordedWaveWrap.style.display = 'block';
+    if (recordedWs) { recordedWs.destroy(); recordedWs = null; }
+    recordedWs = WaveSurfer.create({
+      container: recordedWaveEl,
+      waveColor: '#7b82a8',
+      progressColor: '#00d4aa',
+      height: 60, barWidth: 2, barGap: 1, barRadius: 2,
+    });
+    recordedWs.loadBlob(blob);
+
+    // Also show the shared input waveform section
+    renderInputWaveform(file);
+  }
+
+  // ── Shared input waveform ─────────────────────────────────────────────────
   function renderInputWaveform(f) {
-    inputWaveWrap.style.display = 'block';
+    inputWaveSection.style.display = 'block';
     if (inputWs) { inputWs.destroy(); inputWs = null; }
     inputWs = WaveSurfer.create({
       container: inputWaveEl,
       waveColor: '#4a5080',
       progressColor: '#6c63ff',
-      height: 70,
-      barWidth: 2,
-      barGap: 1,
-      barRadius: 2,
-      interact: true,
+      height: 68, barWidth: 2, barGap: 1, barRadius: 2, interact: true,
     });
     inputWs.loadBlob(f);
+
+    // Reset play button label
+    btnPlayInput.innerHTML = `<svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor"><path d="M8 5v14l11-7z"/></svg> Play`;
+    inputWs.on('play',   () => { btnPlayInput.innerHTML = `<svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg> Pause`; });
+    inputWs.on('pause',  () => { btnPlayInput.innerHTML = `<svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor"><path d="M8 5v14l11-7z"/></svg> Play`; });
+    inputWs.on('finish', () => { btnPlayInput.innerHTML = `<svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor"><path d="M8 5v14l11-7z"/></svg> Play`; });
   }
 
-  // ── Separate ──
+  btnPlayInput.addEventListener('click', () => {
+    if (inputWs) {
+      // Pause all output players when playing input
+      sourceWs.forEach(ws => ws.pause());
+      inputWs.playPause();
+    }
+  });
+
+  // ── Separate ──────────────────────────────────────────────────────────────
   btnSeparate.addEventListener('click', async () => {
     if (!selectedFile) return;
-    hideError();
-    hideResults();
+    hideError(); hideResults();
     showProgress('Uploading audio…');
     btnSeparate.disabled = true;
+    // Pause input player
+    if (inputWs) inputWs.pause();
 
     const form = new FormData();
-    form.append('audio', selectedFile);
+    form.append('audio', selectedFile, selectedFile.name);
 
     let data;
     try {
@@ -420,9 +641,8 @@
     renderResults(data);
   });
 
-  // ── Render results ──
+  // ── Render results ─────────────────────────────────────────────────────────
   function renderResults(data) {
-    // Info strip
     infoStrip.innerHTML = `
       <span class="info-item"><span>Duration</span><b>${data.duration}s</b></span>
       <span class="info-item"><span>Sample rate</span><b>${data.sample_rate} Hz</b></span>
@@ -435,32 +655,30 @@
     sourceWs.length = 0;
 
     data.sources.forEach((fname, i) => {
-      const color = WAVE_COLORS[i % WAVE_COLORS.length];
-      const dotClass = `dot-${i + 1}`;
+      const color    = WAVE_COLORS[i % WAVE_COLORS.length];
       const audioUrl = `/audio/${fname}`;
+      const waveId   = `wave-out-${i}`;
 
       const card = document.createElement('div');
       card.className = 'source-card';
-      const waveId = `wave-${i}`;
       card.innerHTML = `
         <div class="source-header">
           <div class="source-title">
-            <div class="source-dot ${dotClass}" style="background:${color}"></div>
+            <div class="source-dot" style="background:${color}"></div>
             Speaker ${i + 1}
           </div>
           <div class="source-controls">
-            <button class="btn-icon" id="play-btn-${i}" title="Play / Pause">
-              <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-              Play
+            <button class="btn-icon" id="play-btn-${i}">
+              <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Play
             </button>
-            <a class="btn-icon" href="${audioUrl}" download="${fname}" title="Download">
+            <a class="btn-icon" href="${audioUrl}" download="${fname}">
               <svg viewBox="0 0 24 24"><path d="M5 20h14v-2H5v2zm7-18v12.17l-3.59-3.58L7 12l5 5 5-5-1.41-1.41L13 14.17V2h-1z"/></svg>
               Download
             </a>
           </div>
         </div>
         <div class="waveform-container" id="${waveId}"></div>
-        <div class="source-meta">File: ${fname}</div>
+        <div class="source-meta">${fname}</div>
       `;
       sourcesContainer.appendChild(card);
 
@@ -468,28 +686,21 @@
         container: `#${waveId}`,
         waveColor: color + '88',
         progressColor: color,
-        height: 80,
-        barWidth: 2,
-        barGap: 1,
-        barRadius: 2,
-        interact: true,
+        height: 76, barWidth: 2, barGap: 1, barRadius: 2, interact: true,
       });
       ws.load(audioUrl);
       sourceWs.push(ws);
 
-      // Play/pause button
       const playBtn = document.getElementById(`play-btn-${i}`);
-      ws.on('play', () => {
-        playBtn.innerHTML = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg> Pause`;
-      });
-      ws.on('pause', () => {
-        playBtn.innerHTML = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M8 5v14l11-7z"/></svg> Play`;
-      });
-      ws.on('finish', () => {
-        playBtn.innerHTML = `<svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:currentColor"><path d="M8 5v14l11-7z"/></svg> Play`;
-      });
+      const setPlay  = () => { playBtn.innerHTML = `<svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor"><path d="M8 5v14l11-7z"/></svg> Play`; };
+      const setPause = () => { playBtn.innerHTML = `<svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg> Pause`; };
+      ws.on('play', setPause);
+      ws.on('pause', setPlay);
+      ws.on('finish', setPlay);
+
       playBtn.addEventListener('click', () => {
-        // Pause all others before playing this one
+        // Pause input + all other sources when this one plays
+        if (inputWs) inputWs.pause();
         sourceWs.forEach((other, j) => { if (j !== i) other.pause(); });
         ws.playPause();
       });
@@ -499,7 +710,19 @@
     resultsDiv.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
-  // ── Helpers ──
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function clearInput() {
+    selectedFile = null;
+    btnSeparate.disabled = true;
+    fileName.textContent = '';
+    inputWaveSection.style.display = 'none';
+    if (inputWs) { inputWs.destroy(); inputWs = null; }
+    recordedWaveWrap.style.display = 'none';
+    if (recordedWs) { recordedWs.destroy(); recordedWs = null; }
+    recordTimer.textContent = '0:00';
+    recordStatus.textContent = 'Click to start recording';
+  }
+
   function showProgress(msg) {
     progressTxt.textContent = msg;
     progressWrap.style.display = 'flex';

@@ -92,7 +92,7 @@ N_epochs: 200
 batch_size: 1
 
 # FIX #1: 10× lower LR to prevent catastrophic forgetting of pretrained weights
-lr: 0.000015
+lr: 0.00015
 
 clip_grad_norm: 5
 loss_upper_lim: 999999
