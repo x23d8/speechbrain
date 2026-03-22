@@ -74,7 +74,7 @@ pretrained_separator: !new:speechbrain.utils.parameter_transfer.Pretrainer
         masknet: speechbrain/sepformer-wsj02mix/masknet.ckpt
 
 # ── Experiment params ───────────────────────────────────────────────────────
-precision: fp32
+precision: fp16
 num_spks: 2
 noprogressbar: False
 save_audio: True
@@ -173,7 +173,7 @@ Encoder: !new:speechbrain.lobes.models.dual_path.Encoder
     out_channels: !ref <N_encoder_out>
 
 SBtfintra: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
-    num_layers: 4
+    num_layers: 8
     d_model: !ref <out_channels>
     nhead: 8
     d_ffn: 1024
@@ -182,7 +182,7 @@ SBtfintra: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
     norm_before: True
 
 SBtfinter: !new:speechbrain.lobes.models.dual_path.SBTransformerBlock
-    num_layers: 4
+    num_layers: 8
     d_model: !ref <out_channels>
     nhead: 8
     d_ffn: 1024
