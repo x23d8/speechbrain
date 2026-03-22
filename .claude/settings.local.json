@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rm \"F:/ducdataset/train/mix/mix_00004_source1.wav\")",
+      "Bash(rm \"F:/ducdataset/train/mix/mix_00004_source2.wav\")",
+      "Bash(rm \"F:/sb_sep/recipes/WSJ0Mix/separation/results/sepformer-custom/42/save/custom_train.csv\")",
+      "Bash(rm \"F:/sb_sep/recipes/WSJ0Mix/separation/results/sepformer-custom/42/save/custom_valid.csv\")",
+      "Bash(rm \"F:/sb_sep/recipes/WSJ0Mix/separation/results/sepformer-custom/42/save/custom_test.csv\")"
+    ]
+  }
+}

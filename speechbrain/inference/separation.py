@@ -138,7 +138,7 @@ if __name__ == "__main__":
     
     from pathlib import Path
 
-    audio_path = r"mix_00001.wav"
+    audio_path = r"mix_00004.wav"
     est_sources = model.separate_file(audio_path)
 
     print("Output shape:", est_sources.shape)
