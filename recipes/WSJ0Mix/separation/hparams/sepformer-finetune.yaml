@@ -194,7 +194,7 @@ MaskNet: !new:speechbrain.lobes.models.dual_path.Dual_Path_Model
     num_spks: !ref <num_spks>
     in_channels: !ref <N_encoder_out>
     out_channels: !ref <out_channels>
-    num_layers: 1
+    num_layers: 2
     K: 250
     intra_model: !ref <SBtfintra>
     inter_model: !ref <SBtfinter>
